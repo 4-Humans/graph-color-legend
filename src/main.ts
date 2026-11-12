@@ -1,4 +1,4 @@
-import { App, Menu, normalizePath, Notice, Plugin, PluginSettingTab, Setting, TFile, View } from "obsidian";
+import { App, Menu, normalizePath, Notice, Plugin, PluginSettingTab, Setting, SettingDefinitionItem, TFile, View } from "obsidian";
 import {
 	ColorGroup,
 	getGraphPluginInstance,
@@ -56,7 +56,7 @@ export interface GraphColorLegendSettings {
 
 
 interface GroupsSnapshot {
-	global: ColorGroup[] | null;
+	globalGroups: ColorGroup[] | null;
 	locals: { view: View; groups: ColorGroup[] }[];
 }
 
@@ -90,6 +90,20 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 // Note: DEFAULT_SETTINGS.names is never used directly; sanitizeSettings makes a fresh object.
 
 const POSITIONS: Position[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
+
+/** Settings the settings tab edits directly (toggles, sliders, the corner). */
+const CONTROL_KEYS = [
+	"position",
+	"fontSize",
+	"opacity",
+	"highlight",
+	"showInLocalGraph",
+	"showTags",
+	"showProperties",
+	"neighbors",
+	"showLegend",
+] as const;
+type ControlKey = (typeof CONTROL_KEYS)[number];
 
 function clampNumber(v: unknown, min: number, max: number, fallback: number): number {
 	return typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
@@ -440,18 +454,18 @@ export default class GraphColorLegendPlugin extends Plugin {
 
 	private snapshotGroups(): GroupsSnapshot {
 		const inst = getGraphPluginInstance(this.app);
-		const global = (inst?.options ? normalizeGroups(inst.options.colorGroups) : null) ?? this.fileGroups;
+		const stored = (inst?.options ? normalizeGroups(inst.options.colorGroups) : null) ?? this.fileGroups;
 		const locals: GroupsSnapshot["locals"] = [];
 		for (const leaf of this.app.workspace.getLeavesOfType(LOCAL_GRAPH)) {
 			if (leaf.isDeferred) continue;
 			const groups = readLiveGroups(leaf.view);
 			if (groups) locals.push({ view: leaf.view, groups });
 		}
-		return { global: global ? global.map((g) => ({ ...g })) : null, locals };
+		return { globalGroups: stored ? stored.map((g) => ({ ...g })) : null, locals };
 	}
 
 	private async restoreGroups(snap: GroupsSnapshot): Promise<void> {
-		if (snap.global) await this.replaceGroups(null, false, snap.global);
+		if (snap.globalGroups) await this.replaceGroups(null, false, snap.globalGroups);
 		for (const l of snap.locals) await this.replaceGroups(l.view, true, l.groups);
 	}
 
@@ -752,208 +766,215 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 		super(app, plugin);
 	}
 
+	/** Toggles, sliders and the dropdown, described once for both ways of drawing the tab. */
+	private controls(): { key: ControlKey; name: string; desc: string; kind: "toggle" | "slider" | "dropdown"; min?: number; max?: number; step?: number }[] {
+		const str = t();
+		return [
+			{ key: "position", name: str.position, desc: str.positionDesc, kind: "dropdown" },
+			{ key: "fontSize", name: str.fontSize, desc: str.fontSizeDesc, kind: "slider", min: 10, max: 20, step: 1 },
+			{ key: "opacity", name: str.opacity, desc: str.opacityDesc, kind: "slider", min: 30, max: 100, step: 5 },
+			{ key: "highlight", name: str.highlight, desc: str.highlightDesc, kind: "toggle" },
+			{ key: "showInLocalGraph", name: str.localGraph, desc: str.localGraphDesc, kind: "toggle" },
+			{ key: "showTags", name: str.showTags, desc: str.showTagsDesc, kind: "toggle" },
+			{ key: "showProperties", name: str.showProperties, desc: str.showPropertiesDesc, kind: "toggle" },
+			{ key: "neighbors", name: str.neighbors, desc: str.neighborsDesc, kind: "toggle" },
+			{ key: "showLegend", name: str.showLegend, desc: str.showLegendDesc, kind: "toggle" },
+		];
+	}
+
+	private positions(): Record<string, string> {
+		const str = t();
+		return { "top-left": str.topLeft, "top-right": str.topRight, "bottom-left": str.bottomLeft, "bottom-right": str.bottomRight };
+	}
+
+	/**
+	 * Obsidian 1.13 and later: settings described as data, so they show up in the settings search.
+	 * Older versions ignore this method and call display() below.
+	 */
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		const str = t();
+		const s = this.plugin.settings;
+		const items: SettingDefinitionItem[] = this.controls().map((c): SettingDefinitionItem => {
+			const base = { name: c.name, desc: c.desc };
+			if (c.kind === "toggle") return { ...base, control: { type: "toggle", key: c.key } };
+			if (c.kind === "slider")
+				return { ...base, control: { type: "slider", key: c.key, min: c.min ?? 0, max: c.max ?? 100, step: c.step ?? 1 } };
+			return { ...base, control: { type: "dropdown", key: c.key, options: this.positions() } };
+		});
+		items.push({
+			type: "list",
+			heading: str.presets,
+			emptyState: str.presetsEmpty,
+			items: s.presets.map((preset) => ({
+				name: preset.name,
+				desc: str.presetGroups(preset.groups.length),
+				render: (setting: Setting) => this.fillPreset(setting, preset, false),
+			})),
+			onDelete: (index: number) => {
+				const preset = s.presets[index];
+				if (preset) void this.deletePreset(preset);
+			},
+		});
+		items.push({
+			type: "group",
+			heading: str.entries,
+			items: [
+				...this.entryQueries().map((q) => ({
+					name: q || "—",
+					desc: "",
+					render: (setting: Setting) => this.fillEntry(setting, q),
+				})),
+				{ name: str.reset, desc: str.resetDesc, render: (setting: Setting) => this.fillReset(setting) },
+			],
+		});
+		return items;
+	}
+
+	setControlValue(key: string, value: unknown): Promise<void> {
+		const s = this.plugin.settings as unknown as Record<string, unknown>;
+		if (CONTROL_KEYS.includes(key as ControlKey) && typeof value === typeof s[key]) s[key] = value;
+		return this.plugin.saveSettingsAndRefresh();
+	}
+
+	/** Draw the tab again after a list changed (new Obsidian redraws the definitions, old calls display()). */
+	private redraw(): void {
+		const tab = this as unknown as { update?: () => void };
+		if (typeof tab.update === "function") tab.update();
+		else this.display();
+	}
+
+	/** Obsidian before 1.13: the same settings drawn by hand. */
 	display(): void {
 		const { containerEl } = this;
-		const s = this.plugin.settings;
+		const s = this.plugin.settings as unknown as Record<ControlKey, unknown>;
 		const str = t();
 		containerEl.empty();
 
-		new Setting(containerEl)
-			.setName(str.position)
-			.setDesc(str.positionDesc)
-			.addDropdown((d) =>
-				d
-					.addOptions({
-						"top-left": str.topLeft,
-						"top-right": str.topRight,
-						"bottom-left": str.bottomLeft,
-						"bottom-right": str.bottomRight,
-					})
-					.setValue(s.position)
-					.onChange(async (v) => {
-						s.position = v as Position;
-						await this.plugin.saveSettingsAndRefresh();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.fontSize)
-			.setDesc(str.fontSizeDesc)
-			.addSlider((sl) =>
-				sl
-					.setLimits(10, 20, 1)
-					.setValue(s.fontSize)
-					.onChange(async (v) => {
-						s.fontSize = v;
-						await this.plugin.saveSettingsAndRefresh();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.opacity)
-			.setDesc(str.opacityDesc)
-			.addSlider((sl) =>
-				sl
-					.setLimits(30, 100, 5)
-					.setValue(s.opacity)
-					.onChange(async (v) => {
-						s.opacity = v;
-						await this.plugin.saveSettingsAndRefresh();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.highlight)
-			.setDesc(str.highlightDesc)
-			.addToggle((tg) =>
-				tg.setValue(s.highlight).onChange(async (v) => {
-					s.highlight = v;
-					await this.plugin.saveSettingsAndRefresh();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.localGraph)
-			.setDesc(str.localGraphDesc)
-			.addToggle((tg) =>
-				tg.setValue(s.showInLocalGraph).onChange(async (v) => {
-					s.showInLocalGraph = v;
-					await this.plugin.saveSettingsAndRefresh();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.showTags)
-			.setDesc(str.showTagsDesc)
-			.addToggle((tg) =>
-				tg.setValue(s.showTags).onChange(async (v) => {
-					s.showTags = v;
-					await this.plugin.saveSettingsAndRefresh();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.showProperties)
-			.setDesc(str.showPropertiesDesc)
-			.addToggle((tg) =>
-				tg.setValue(s.showProperties).onChange(async (v) => {
-					s.showProperties = v;
-					await this.plugin.saveSettingsAndRefresh();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.neighbors)
-			.setDesc(str.neighborsDesc)
-			.addToggle((tg) =>
-				tg.setValue(s.neighbors).onChange(async (v) => {
-					s.neighbors = v;
-					await this.plugin.saveSettingsAndRefresh();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName(str.showLegend)
-			.setDesc(str.showLegendDesc)
-			.addToggle((tg) =>
-				tg.setValue(s.showLegend).onChange(async (v) => {
-					s.showLegend = v;
-					await this.plugin.saveSettingsAndRefresh();
-				}),
-			);
+		for (const c of this.controls()) {
+			const setting = new Setting(containerEl).setName(c.name).setDesc(c.desc);
+			const save = async (v: unknown) => {
+				await this.setControlValue(c.key, v);
+			};
+			if (c.kind === "toggle") setting.addToggle((tg) => tg.setValue(s[c.key] === true).onChange(save));
+			else if (c.kind === "slider")
+				setting.addSlider((sl) => sl.setLimits(c.min ?? 0, c.max ?? 100, c.step ?? 1).setValue(Number(s[c.key])).onChange(save));
+			else setting.addDropdown((d) => d.addOptions(this.positions()).setValue(String(s[c.key])).onChange(save));
+		}
 
 		new Setting(containerEl).setName(str.presets).setDesc(str.presetsDesc).setHeading();
-		if (s.presets.length === 0) {
+		if (this.plugin.settings.presets.length === 0) {
 			containerEl.createEl("p", { cls: "setting-item-description", text: str.presetsEmpty });
 		}
-		for (const preset of s.presets) {
-			const setting = new Setting(containerEl).setDesc(str.presetGroups(preset.groups.length));
-			const dots = setting.nameEl.createSpan({ cls: "gcl-preset-dots" });
-			for (const g of preset.groups.slice(0, 12)) {
-				dots.createSpan({ cls: "gcl-swatch" }).setCssProps({ "--gcl-color": rgbToHex(g.rgb) });
-			}
-			setting
-				.addText((tx) =>
-					tx.setValue(preset.name).onChange(async (v) => {
-						const name = v.trim().slice(0, 100);
-						if (!name || s.presets.some((p) => p !== preset && p.name === name)) return;
-						preset.name = name;
-						await this.plugin.saveSettingsQuiet();
-					}),
-				)
-				.addExtraButton((b) =>
-					b
-						.setIcon("trash-2")
-						.setTooltip(str.presetDelete)
-						.onClick(async () => {
-							s.presets = s.presets.filter((p) => p !== preset);
-							await this.plugin.saveSettingsQuiet();
-							this.display();
-						}),
-				);
+		for (const preset of this.plugin.settings.presets) {
+			this.fillPreset(new Setting(containerEl).setDesc(str.presetGroups(preset.groups.length)), preset, true);
 		}
 
 		new Setting(containerEl).setName(str.entries).setDesc(str.entriesDesc).setHeading();
-
-		const queries = s.knownQueries.length ? s.knownQueries : (this.plugin.fileGroups ?? []).map((g) => g.query);
-		const colors = new Map((this.plugin.fileGroups ?? []).map((g) => [g.query, g.rgb] as const));
+		const queries = this.entryQueries();
 		if (queries.length === 0) {
 			containerEl.createEl("p", { cls: "setting-item-description", text: str.entriesEmpty });
 		}
-		for (const q of queries) {
-			const setting = new Setting(containerEl).setName(q || "—");
-			const rgb = colors.get(q);
-			if (rgb !== undefined) {
-				const sw = setting.nameEl.createSpan({ cls: "gcl-swatch gcl-settings-swatch" });
-				sw.setCssProps({ "--gcl-color": rgbToHex(rgb) });
-				setting.nameEl.prepend(sw);
-			}
-			setting
-				.addText((tx) =>
-					tx
-						.setPlaceholder(labelFromQuery(q))
-						.setValue(s.names[q] ?? "")
-						.onChange(async (v) => {
-							const value = v.trim();
-							await this.plugin.recordSettings(
-								str.stepRename(this.plugin.displayName(q)),
-								() => {
-									if (value) s.names[q] = value;
-									else delete s.names[q];
-								},
-								{ mergeKey: "name:" + q },
-							);
-						}),
-				)
-				.addExtraButton((b) => {
-					const hidden = s.hidden.includes(q);
-					b.setIcon(hidden ? "eye-off" : "eye")
-						.setTooltip(hidden ? str.show : str.hide)
-						.onClick(async () => {
-							const wasHidden = s.hidden.includes(q);
-							const name = this.plugin.displayName(q);
-							await this.plugin.recordSettings(wasHidden ? str.stepShow(name) : str.stepHide(name), () => {
-								if (wasHidden) s.hidden.remove(q);
-								else s.hidden.push(q);
-							});
-							this.display();
-						});
-				});
-		}
+		for (const q of queries) this.fillEntry(new Setting(containerEl).setName(q || "—"), q);
+		this.fillReset(new Setting(containerEl).setName(str.reset).setDesc(str.resetDesc));
+	}
 
-		new Setting(containerEl)
-			.setName(str.reset)
-			.setDesc(str.resetDesc)
-			.addButton((b) => {
-				b.setButtonText(str.resetButton).onClick(async () => {
-					await this.plugin.recordSettings(str.stepResetNames, () => {
-						s.names = Object.create(null) as Record<string, string>;
-						s.hidden = [];
+	private entryQueries(): string[] {
+		const s = this.plugin.settings;
+		return s.knownQueries.length ? s.knownQueries : (this.plugin.fileGroups ?? []).map((g) => g.query);
+	}
+
+	private async deletePreset(preset: Preset): Promise<void> {
+		const s = this.plugin.settings;
+		s.presets = s.presets.filter((p) => p !== preset);
+		await this.plugin.saveSettingsQuiet();
+		this.redraw();
+	}
+
+	/** One saved set: its colors, its name (editable), and a delete button where the list has none. */
+	private fillPreset(setting: Setting, preset: Preset, withDelete: boolean): void {
+		const str = t();
+		const s = this.plugin.settings;
+		const dots = setting.nameEl.createSpan({ cls: "gcl-preset-dots" });
+		for (const g of preset.groups.slice(0, 12)) {
+			dots.createSpan({ cls: "gcl-swatch" }).setCssProps({ "--gcl-color": rgbToHex(g.rgb) });
+		}
+		setting.nameEl.prepend(dots);
+		setting.addText((tx) =>
+			tx.setValue(preset.name).onChange(async (v) => {
+				const name = v.trim().slice(0, 100);
+				if (!name || s.presets.some((p) => p !== preset && p.name === name)) return;
+				preset.name = name;
+				await this.plugin.saveSettingsQuiet();
+			}),
+		);
+		if (withDelete) {
+			setting.addExtraButton((b) =>
+				b
+					.setIcon("trash-2")
+					.setTooltip(str.presetDelete)
+					.onClick(() => void this.deletePreset(preset)),
+			);
+		}
+	}
+
+	/** One legend entry: color, own name and the eye. */
+	private fillEntry(setting: Setting, q: string): void {
+		const str = t();
+		const s = this.plugin.settings;
+		const rgb = (this.plugin.fileGroups ?? []).find((g) => g.query === q)?.rgb;
+		if (rgb !== undefined) {
+			const sw = setting.nameEl.createSpan({ cls: "gcl-swatch gcl-settings-swatch" });
+			sw.setCssProps({ "--gcl-color": rgbToHex(rgb) });
+			setting.nameEl.prepend(sw);
+		}
+		setting
+			.addText((tx) =>
+				tx
+					.setPlaceholder(labelFromQuery(q))
+					.setValue(s.names[q] ?? "")
+					.onChange(async (v) => {
+						const value = v.trim();
+						await this.plugin.recordSettings(
+							str.stepRename(this.plugin.displayName(q)),
+							() => {
+								if (value) s.names[q] = value;
+								else delete s.names[q];
+							},
+							{ mergeKey: "name:" + q },
+						);
+					}),
+			)
+			.addExtraButton((b) => {
+				const paint = () => {
+					const hidden = s.hidden.includes(q);
+					b.setIcon(hidden ? "eye-off" : "eye").setTooltip(hidden ? str.show : str.hide);
+				};
+				paint();
+				b.onClick(async () => {
+					const wasHidden = s.hidden.includes(q);
+					const name = this.plugin.displayName(q);
+					await this.plugin.recordSettings(wasHidden ? str.stepShow(name) : str.stepHide(name), () => {
+						if (wasHidden) s.hidden.remove(q);
+						else s.hidden.push(q);
 					});
-					this.display();
+					paint();
 				});
-				// Red "destructive" look that works on every supported Obsidian version.
-				b.buttonEl.addClass("mod-warning");
 			});
+	}
+
+	private fillReset(setting: Setting): void {
+		const str = t();
+		const s = this.plugin.settings;
+		setting.addButton((b) => {
+			b.setButtonText(str.resetButton).onClick(async () => {
+				await this.plugin.recordSettings(str.stepResetNames, () => {
+					s.names = Object.create(null) as Record<string, string>;
+					s.hidden = [];
+				});
+				this.redraw();
+			});
+			// Red "destructive" look that works on every supported Obsidian version.
+			b.buttonEl.addClass("mod-warning");
+		});
 	}
 }

@@ -218,7 +218,9 @@ export class EntryModal extends Modal {
 			usage,
 			old,
 			next,
-			(done, total) => button.setButtonText(`${done} / ${total}`),
+			(done, total) => {
+				button.setButtonText(`${done} / ${total}`);
+			},
 			this.legend,
 		);
 		this.running = false;
