@@ -9,8 +9,17 @@
 		"test": "esbuild src/tags.ts --format=esm --outfile=tests/tags.bundle.mjs --log-level=warning && esbuild src/labels.ts --format=esm --outfile=tests/labels.bundle.mjs --log-level=warning && node tests/tags.test.mjs && node tests/fuzz.mjs",
 		"lint": "eslint ."
 	},
-	"author": "4 Humans",
+	"author": "4 Humans <support@4humans.io>",
 	"license": "MIT",
+	"homepage": "https://github.com/4-Humans/graph-color-legend#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/4-Humans/graph-color-legend.git"
+	},
+	"bugs": {
+		"url": "https://github.com/4-Humans/graph-color-legend/issues",
+		"email": "support@4humans.io"
+	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.5",
 		"esbuild": "^0.25.12",

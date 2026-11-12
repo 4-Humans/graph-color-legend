@@ -52,6 +52,10 @@ npm run build   # type check and production build
 npx eslint .    # lint with the official Obsidian rules
 ```
 
+## Support
+
+Found a bug or have a question? [Open an issue](https://github.com/4-Humans/graph-color-legend/issues) or write to [support@4humans.io](mailto:support@4humans.io).
+
 ## License
 
 MIT © 2026 4 Humans
@@ -90,6 +94,10 @@ MIT © 2026 4 Humans
 ## Установка вручную
 
 Скопируйте `main.js`, `manifest.json` и `styles.css` в `<хранилище>/.obsidian/plugins/graph-color-legend/` и включите плагин в «Настройки → Сторонние плагины».
+
+## Поддержка
+
+Нашли ошибку или есть вопрос? [Создайте issue](https://github.com/4-Humans/graph-color-legend/issues) или напишите на [support@4humans.io](mailto:support@4humans.io).
 
 ## Лицензия
 
