@@ -1,0 +1,73 @@
+/* English: the base strings. Every other language falls back to these per key. */
+export const en = {
+	legend: "Legend",
+	collapse: "Collapse legend",
+	expand: "Expand legend",
+	edit: "Rename or hide entries",
+	doneEditing: "Done",
+	rename: "Rename",
+	hide: "Hide entry",
+	show: "Show entry",
+	menuHint: "Click for actions",
+	menuPin: "Keep highlighted",
+	menuUnpin: "Clear highlight",
+	menuRenameLegend: "Rename only in the legend",
+	menuRenameEverywhere: "Rename the tag everywhere",
+	menuRenameEverywhereNoTags: "Rename everywhere (tags only)",
+	noGroups: "No color groups. Add them in the graph settings, under Groups.",
+	renameDesc: "Leave empty to use the name made from the query.",
+	query: "Query",
+	save: "Save",
+	cancel: "Cancel",
+	// settings
+	position: "Position",
+	positionDesc: "Corner of the graph where the legend is shown.",
+	topLeft: "Top left",
+	topRight: "Top right",
+	bottomLeft: "Bottom left",
+	bottomRight: "Bottom right",
+	fontSize: "Font size",
+	fontSizeDesc: "Size of the legend text, in pixels.",
+	opacity: "Background opacity",
+	opacityDesc: "How solid the legend background is, in percent.",
+	highlight: "Highlight on hover",
+	highlightDesc:
+		"Fade the other nodes when you point at an entry. Uses the graph's internal state; turns itself off if a future Obsidian version changes it.",
+	localGraph: "Show in local graph",
+	localGraphDesc: "Also show the legend in the local graph.",
+	entries: "Entries",
+	entriesDesc: "Names are kept by the plugin. The graph settings are never changed.",
+	entriesEmpty: "Open the graph once to list its color groups here.",
+	reset: "Reset names",
+	resetDesc: "Remove all custom names and show hidden entries again.",
+	resetButton: "Reset",
+	tagDesc:
+		"Changes the tag in every note that uses it, in the text and in properties, nested tags included. The color group in the graph settings is updated too.",
+	tagWhich: "Tag",
+	tagNew: "New tag",
+	tagNewPlaceholder: "new-tag",
+	tagFind: "Find notes",
+	tagInvalid: {
+		empty: "Enter a new tag.",
+		chars: "A tag can contain letters, digits, emoji, \"_\", \"-\" and \"/\" for nesting. No spaces.",
+		digits: "A tag needs at least one character that is not a digit.",
+		slash: "A tag cannot start or end with \"/\" or contain \"//\".",
+	},
+	tagSame: "The new tag is the same as the old one.",
+	tagNoNotes: (old: string) => `No notes use #${old}.`,
+	tagSummary: (old: string, next: string, n: number) =>
+		`#${old} will become #${next} in ${n} ${n === 1 ? "note" : "notes"}:`,
+	tagMerge: (next: string, n: number) =>
+		`#${next} is already used in ${n} ${n === 1 ? "note" : "notes"}. The two tags will be merged.`,
+	tagCounts: (inline: number, props: number) =>
+		[inline ? `${inline} in text` : "", props ? `${props} in properties` : ""].filter(Boolean).join(", "),
+	tagMore: (n: number) => `…and ${n} more`,
+	tagWarning: "This changes your files and cannot be undone with one click. Make a backup first if you are unsure.",
+	tagConfirm: (n: number) => `Rename in ${n} ${n === 1 ? "note" : "notes"}`,
+	tagDone: (old: string, next: string, n: number) => `#${old} renamed to #${next} in ${n} ${n === 1 ? "note" : "notes"}.`,
+	tagGraphNotUpdated: "The graph color group could not be updated automatically. Change the tag in the graph settings, under Groups.",
+	tagFailed: (n: number) =>
+		`${n} ${n === 1 ? "note was" : "notes were"} not changed because ${n === 1 ? "it" : "they"} changed during the rename. Run it again for them:`,
+};
+
+export type Strings = typeof en;

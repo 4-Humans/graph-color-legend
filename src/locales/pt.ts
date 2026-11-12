@@ -1,0 +1,73 @@
+import type { Strings } from "./en";
+
+const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+
+/** Brazilian Portuguese (also used for "pt"). */
+export const pt: Strings = {
+	legend: "Legenda",
+	collapse: "Recolher legenda",
+	expand: "Expandir legenda",
+	edit: "Renomear ou ocultar itens",
+	doneEditing: "Concluído",
+	rename: "Renomear",
+	hide: "Ocultar item",
+	show: "Mostrar item",
+	menuHint: "Clique para ver as ações",
+	menuPin: "Manter destaque",
+	menuUnpin: "Remover destaque",
+	menuRenameLegend: "Renomear só na legenda",
+	menuRenameEverywhere: "Renomear a tag em todo lugar",
+	menuRenameEverywhereNoTags: "Renomear em todo lugar (só tags)",
+	noGroups: "Não há grupos de cor. Adicione-os nas configurações do grafo, em “Grupos”.",
+	renameDesc: "Deixe em branco para usar o nome criado a partir da consulta.",
+	query: "Consulta",
+	save: "Salvar",
+	cancel: "Cancelar",
+	position: "Posição",
+	positionDesc: "Canto do grafo onde a legenda aparece.",
+	topLeft: "Superior esquerdo",
+	topRight: "Superior direito",
+	bottomLeft: "Inferior esquerdo",
+	bottomRight: "Inferior direito",
+	fontSize: "Tamanho da fonte",
+	fontSizeDesc: "Tamanho do texto da legenda, em pixels.",
+	opacity: "Opacidade do fundo",
+	opacityDesc: "O quanto o fundo da legenda é opaco, em porcentagem.",
+	highlight: "Destacar ao passar o mouse",
+	highlightDesc:
+		"Os outros nós ficam esmaecidos quando você aponta para um item. Usa o estado interno do grafo; desliga sozinho se uma versão futura do Obsidian mudar isso.",
+	localGraph: "Mostrar no grafo local",
+	localGraphDesc: "Mostrar a legenda também no grafo local.",
+	entries: "Itens",
+	entriesDesc: "Os nomes ficam guardados no plugin. As configurações do grafo nunca são alteradas.",
+	entriesEmpty: "Abra o grafo uma vez para ver aqui os grupos de cor.",
+	reset: "Redefinir nomes",
+	resetDesc: "Remover todos os nomes personalizados e mostrar de novo os itens ocultos.",
+	resetButton: "Redefinir",
+	tagDesc:
+		"Muda a tag em todas as notas que a usam, no texto e nas propriedades, incluindo tags aninhadas. O grupo de cor nas configurações do grafo também é atualizado.",
+	tagWhich: "Tag",
+	tagNew: "Nova tag",
+	tagNewPlaceholder: "nova-tag",
+	tagFind: "Encontrar notas",
+	tagInvalid: {
+		empty: "Digite uma nova tag.",
+		chars: "Uma tag pode ter letras, números, emojis, “_”, “-” e “/” para aninhar. Sem espaços.",
+		digits: "Uma tag precisa de pelo menos um caractere que não seja número.",
+		slash: "Uma tag não pode começar nem terminar com “/” nem conter “//”.",
+	},
+	tagSame: "A nova tag é igual à antiga.",
+	tagNoNotes: (old) => `Nenhuma nota usa #${old}.`,
+	tagSummary: (old, next, k) => `#${old} vai virar #${next} em ${n(k, "nota", "notas")}:`,
+	tagMerge: (next, k) => `#${next} já é usada em ${n(k, "nota", "notas")}. As duas tags serão unidas.`,
+	tagCounts: (inline, props) =>
+		[inline ? `${inline} no texto` : "", props ? `${props} nas propriedades` : ""].filter(Boolean).join(", "),
+	tagMore: (k) => `…e mais ${k}`,
+	tagWarning: "Isso altera seus arquivos e não pode ser desfeito com um clique. Se tiver dúvida, faça um backup antes.",
+	tagConfirm: (k) => `Renomear em ${n(k, "nota", "notas")}`,
+	tagDone: (old, next, k) => `#${old} renomeada para #${next} em ${n(k, "nota", "notas")}.`,
+	tagGraphNotUpdated:
+		"Não foi possível atualizar automaticamente o grupo de cor do grafo. Altere a tag nas configurações do grafo, em “Grupos”.",
+	tagFailed: (k) =>
+		`${n(k, "nota não foi alterada", "notas não foram alteradas")} porque mudaram durante a renomeação. Execute de novo para elas:`,
+};

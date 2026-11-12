@@ -1,0 +1,73 @@
+import type { Strings } from "./en";
+
+const n = (k: number, one: string, many: string) => `${k} ${k <= 1 ? one : many}`;
+
+export const fr: Strings = {
+	legend: "Légende",
+	collapse: "Replier la légende",
+	expand: "Déplier la légende",
+	edit: "Renommer ou masquer des entrées",
+	doneEditing: "Terminé",
+	rename: "Renommer",
+	hide: "Masquer l’entrée",
+	show: "Afficher l’entrée",
+	menuHint: "Cliquez pour les actions",
+	menuPin: "Garder la mise en évidence",
+	menuUnpin: "Retirer la mise en évidence",
+	menuRenameLegend: "Renommer seulement dans la légende",
+	menuRenameEverywhere: "Renommer le tag partout",
+	menuRenameEverywhereNoTags: "Renommer partout (tags uniquement)",
+	noGroups: "Aucun groupe de couleurs. Ajoutez-en dans les réglages du graphe, rubrique « Groupes ».",
+	renameDesc: "Laissez vide pour utiliser le nom tiré de la requête.",
+	query: "Requête",
+	save: "Enregistrer",
+	cancel: "Annuler",
+	position: "Position",
+	positionDesc: "Coin du graphe où la légende s’affiche.",
+	topLeft: "En haut à gauche",
+	topRight: "En haut à droite",
+	bottomLeft: "En bas à gauche",
+	bottomRight: "En bas à droite",
+	fontSize: "Taille du texte",
+	fontSizeDesc: "Taille du texte de la légende, en pixels.",
+	opacity: "Opacité du fond",
+	opacityDesc: "Opacité du fond de la légende, en pourcentage.",
+	highlight: "Mettre en évidence au survol",
+	highlightDesc:
+		"Les autres nœuds s’estompent quand vous pointez une entrée. Utilise l’état interne du graphe ; se désactive tout seul si une future version d’Obsidian le modifie.",
+	localGraph: "Afficher dans le graphe local",
+	localGraphDesc: "Afficher aussi la légende dans le graphe local.",
+	entries: "Entrées",
+	entriesDesc: "Les noms sont conservés par le plugin. Les réglages du graphe ne sont jamais modifiés.",
+	entriesEmpty: "Ouvrez le graphe une fois pour voir ici ses groupes de couleurs.",
+	reset: "Réinitialiser les noms",
+	resetDesc: "Supprimer tous les noms personnalisés et réafficher les entrées masquées.",
+	resetButton: "Réinitialiser",
+	tagDesc:
+		"Modifie le tag dans chaque note qui l’utilise, dans le texte et dans les propriétés, tags imbriqués compris. Le groupe de couleurs du graphe est aussi mis à jour.",
+	tagWhich: "Tag",
+	tagNew: "Nouveau tag",
+	tagNewPlaceholder: "nouveau-tag",
+	tagFind: "Trouver les notes",
+	tagInvalid: {
+		empty: "Saisissez un nouveau tag.",
+		chars: "Un tag peut contenir des lettres, des chiffres, des emojis, « _ », « - » et « / » pour l’imbrication. Pas d’espaces.",
+		digits: "Un tag doit contenir au moins un caractère qui n’est pas un chiffre.",
+		slash: "Un tag ne peut pas commencer ni finir par « / », ni contenir « // ».",
+	},
+	tagSame: "Le nouveau tag est identique à l’ancien.",
+	tagNoNotes: (old) => `Aucune note n’utilise #${old}.`,
+	tagSummary: (old, next, k) => `#${old} deviendra #${next} dans ${n(k, "note", "notes")} :`,
+	tagMerge: (next, k) => `#${next} est déjà utilisé dans ${n(k, "note", "notes")}. Les deux tags seront fusionnés.`,
+	tagCounts: (inline, props) =>
+		[inline ? `${inline} dans le texte` : "", props ? `${props} dans les propriétés` : ""].filter(Boolean).join(", "),
+	tagMore: (k) => `…et ${k} de plus`,
+	tagWarning:
+		"Cela modifie vos fichiers et ne s’annule pas en un clic. En cas de doute, faites d’abord une sauvegarde.",
+	tagConfirm: (k) => `Renommer dans ${n(k, "note", "notes")}`,
+	tagDone: (old, next, k) => `#${old} renommé en #${next} dans ${n(k, "note", "notes")}.`,
+	tagGraphNotUpdated:
+		"Le groupe de couleurs du graphe n’a pas pu être mis à jour automatiquement. Modifiez le tag dans les réglages du graphe, rubrique « Groupes ».",
+	tagFailed: (k) =>
+		`${n(k, "note n’a pas été modifiée", "notes n’ont pas été modifiées")}, car elles ont changé pendant le renommage. Relancez pour elles :`,
+};

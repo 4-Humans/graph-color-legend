@@ -1,0 +1,73 @@
+import type { Strings } from "./en";
+
+const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+
+export const de: Strings = {
+	legend: "Legende",
+	collapse: "Legende einklappen",
+	expand: "Legende ausklappen",
+	edit: "Einträge umbenennen oder ausblenden",
+	doneEditing: "Fertig",
+	rename: "Umbenennen",
+	hide: "Eintrag ausblenden",
+	show: "Eintrag einblenden",
+	menuHint: "Klicken für Aktionen",
+	menuPin: "Hervorhebung beibehalten",
+	menuUnpin: "Hervorhebung aufheben",
+	menuRenameLegend: "Nur in der Legende umbenennen",
+	menuRenameEverywhere: "Tag überall umbenennen",
+	menuRenameEverywhereNoTags: "Überall umbenennen (nur Tags)",
+	noGroups: "Keine Farbgruppen. Lege sie in den Graph-Einstellungen unter „Gruppen“ an.",
+	renameDesc: "Leer lassen, um den aus der Abfrage erzeugten Namen zu verwenden.",
+	query: "Abfrage",
+	save: "Speichern",
+	cancel: "Abbrechen",
+	position: "Position",
+	positionDesc: "Ecke des Graphen, in der die Legende angezeigt wird.",
+	topLeft: "Oben links",
+	topRight: "Oben rechts",
+	bottomLeft: "Unten links",
+	bottomRight: "Unten rechts",
+	fontSize: "Schriftgröße",
+	fontSizeDesc: "Größe des Legendentexts in Pixeln.",
+	opacity: "Deckkraft des Hintergrunds",
+	opacityDesc: "Wie deckend der Hintergrund der Legende ist, in Prozent.",
+	highlight: "Beim Überfahren hervorheben",
+	highlightDesc:
+		"Andere Knoten werden blasser, wenn du auf einen Eintrag zeigst. Nutzt den internen Zustand des Graphen und schaltet sich ab, falls eine künftige Obsidian-Version ihn ändert.",
+	localGraph: "Im lokalen Graphen anzeigen",
+	localGraphDesc: "Die Legende auch im lokalen Graphen anzeigen.",
+	entries: "Einträge",
+	entriesDesc: "Die Namen speichert das Plugin. Die Graph-Einstellungen werden nicht verändert.",
+	entriesEmpty: "Öffne den Graphen einmal, damit seine Farbgruppen hier erscheinen.",
+	reset: "Namen zurücksetzen",
+	resetDesc: "Alle eigenen Namen entfernen und ausgeblendete Einträge wieder anzeigen.",
+	resetButton: "Zurücksetzen",
+	tagDesc:
+		"Ändert den Tag in jeder Notiz, die ihn verwendet, im Text und in den Eigenschaften, verschachtelte Tags eingeschlossen. Die Farbgruppe in den Graph-Einstellungen wird ebenfalls angepasst.",
+	tagWhich: "Tag",
+	tagNew: "Neuer Tag",
+	tagNewPlaceholder: "neuer-tag",
+	tagFind: "Notizen finden",
+	tagInvalid: {
+		empty: "Gib einen neuen Tag ein.",
+		chars: "Ein Tag darf Buchstaben, Ziffern, Emojis, „_“, „-“ und „/“ für Verschachtelung enthalten. Keine Leerzeichen.",
+		digits: "Ein Tag braucht mindestens ein Zeichen, das keine Ziffer ist.",
+		slash: "Ein Tag darf nicht mit „/“ beginnen oder enden und kein „//“ enthalten.",
+	},
+	tagSame: "Der neue Tag ist derselbe wie der alte.",
+	tagNoNotes: (old) => `Keine Notiz verwendet #${old}.`,
+	tagSummary: (old, next, k) => `#${old} wird in ${n(k, "Notiz", "Notizen")} zu #${next}:`,
+	tagMerge: (next, k) => `#${next} wird bereits in ${n(k, "Notiz", "Notizen")} verwendet. Die beiden Tags werden zusammengeführt.`,
+	tagCounts: (inline, props) =>
+		[inline ? `${inline} im Text` : "", props ? `${props} in Eigenschaften` : ""].filter(Boolean).join(", "),
+	tagMore: (k) => `…und ${k} weitere`,
+	tagWarning:
+		"Das ändert deine Dateien und lässt sich nicht mit einem Klick rückgängig machen. Lege im Zweifel vorher eine Sicherung an.",
+	tagConfirm: (k) => `In ${n(k, "Notiz", "Notizen")} umbenennen`,
+	tagDone: (old, next, k) => `#${old} wurde in ${n(k, "Notiz", "Notizen")} zu #${next} umbenannt.`,
+	tagGraphNotUpdated:
+		"Die Farbgruppe des Graphen konnte nicht automatisch angepasst werden. Ändere den Tag in den Graph-Einstellungen unter „Gruppen“.",
+	tagFailed: (k) =>
+		`${n(k, "Notiz wurde", "Notizen wurden")} nicht geändert, weil sie sich während des Umbenennens geändert haben. Führe es für sie erneut aus:`,
+};
