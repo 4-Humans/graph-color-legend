@@ -22,7 +22,7 @@
 }
 .gcl-legend.is-empty-local { display: none; }
 /* The graph's settings panel always stays above the legend. */
-.view-content:has(> .gcl-legend) > .graph-controls { z-index: 2; }
+.view-content.gcl-has-legend > .graph-controls { z-index: 2; }
 .gcl-legend.gcl-pos-top-left { top: 12px; left: 12px; }
 .gcl-legend.gcl-pos-top-right { top: 12px; right: 12px; }
 .gcl-legend.gcl-pos-bottom-left { bottom: 12px; left: 12px; }

@@ -166,8 +166,7 @@ export class EntryModal extends Modal {
 		actions.addButton((b) => b.setButtonText(str.cancel).onClick(() => this.close()));
 		actions.addButton((b) => {
 			b.setButtonText(str.tagConfirm(usage.length));
-			if (typeof b.setDestructive === "function") b.setDestructive();
-			else b.buttonEl.addClass("mod-warning");
+			b.buttonEl.addClass("mod-warning");
 			b.onClick(() => void this.run(b, next));
 		});
 	}

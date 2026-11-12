@@ -27,6 +27,8 @@ export class Legend {
 		readonly isLocal: boolean,
 	) {
 		this.el = view.contentEl.createDiv({ cls: "gcl-legend" });
+		// Marks the graph view so CSS can keep the graph settings panel above the legend.
+		view.contentEl.addClass("gcl-has-legend");
 		// Keep pointer and wheel events on the legend from panning or zooming the graph.
 		for (const type of ["pointerdown", "mousedown", "touchstart", "wheel", "dblclick", "contextmenu"]) {
 			this.el.addEventListener(type, (e) => e.stopPropagation());
@@ -42,6 +44,7 @@ export class Legend {
 	destroy(): void {
 		this.setHighlight(null);
 		this.el.remove();
+		this.view.contentEl.removeClass("gcl-has-legend");
 	}
 
 	/** Re-reads groups; rebuilds only if something changed (or when forced). */

@@ -358,9 +358,8 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettingsAndRefresh();
 					this.display();
 				});
-				// setDestructive() arrived in Obsidian 1.13; older versions use the same look via this class.
-				if (typeof b.setDestructive === "function") b.setDestructive();
-				else b.buttonEl.addClass("mod-warning");
+				// Red "destructive" look that works on every supported Obsidian version.
+				b.buttonEl.addClass("mod-warning");
 			});
 	}
 }
