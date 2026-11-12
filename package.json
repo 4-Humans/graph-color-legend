@@ -1,12 +1,12 @@
 {
 	"name": "graph-color-legend",
-	"version": "1.0.1",
+	"version": "2.0.0",
 	"description": "Obsidian plugin: legend for graph color groups.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc --noEmit && node esbuild.config.mjs production",
-		"test": "esbuild src/tags.ts --format=esm --outfile=tests/tags.bundle.mjs --log-level=warning && esbuild src/labels.ts --format=esm --outfile=tests/labels.bundle.mjs --log-level=warning && node tests/tags.test.mjs && node tests/fuzz.mjs",
+		"test": "esbuild src/tags.ts --format=esm --outfile=tests/tags.bundle.mjs --log-level=warning && esbuild src/labels.ts --format=esm --outfile=tests/labels.bundle.mjs --log-level=warning && esbuild src/query-match.ts --format=esm --outfile=tests/query.bundle.mjs --log-level=warning && node tests/tags.test.mjs && node tests/query.test.mjs && node tests/fuzz.mjs",
 		"lint": "eslint ."
 	},
 	"author": "4 Humans <support@4humans.io>",

@@ -20,16 +20,40 @@ interface Patch {
 	state: { on: boolean };
 }
 
+/** What stays bright: nodes of these group colors, plus these notes (by node id = file path). */
+export interface HighlightSpec {
+	rgbs: number[];
+	ids: string[];
+	/** "Only highlighted": the other nodes disappear instead of fading. */
+	hideOthers?: boolean;
+}
+
+interface ActiveSpec {
+	rgbs: Set<number>;
+	ids: Set<string>;
+	alpha: number;
+	key: string;
+}
+
+function specKey(spec: HighlightSpec): string {
+	return JSON.stringify([[...spec.rgbs].sort((a, b) => a - b), [...spec.ids].sort(), spec.hideOthers === true]);
+}
+
+function keeps(spec: ActiveSpec, node: GraphNode): boolean {
+	const own = nodeRgb(node);
+	return (own !== null && spec.rgbs.has(own)) || spec.ids.has(node.id);
+}
+
 export class Highlighter {
-	/** Highlighted group color per renderer. */
-	private active = new WeakMap<GraphRenderer, number>();
+	/** Highlight per renderer. */
+	private active = new WeakMap<GraphRenderer, ActiveSpec>();
 	private patches: Patch[] = [];
 	private nodeProtoPatched = false;
 	private linkProtoPatched = false;
 
-	/** Highlight one color (rgb) in this renderer, or clear with null. Returns false if not supported. */
-	set(renderer: GraphRenderer, rgb: number | null): boolean {
-		if (rgb === null) {
+	/** Highlight in this renderer; null or an empty spec clears it. Returns false if not supported. */
+	set(renderer: GraphRenderer, spec: HighlightSpec | null): boolean {
+		if (!spec || (spec.rgbs.length === 0 && spec.ids.length === 0)) {
 			if (this.active.has(renderer)) {
 				this.active.delete(renderer);
 				this.safeChanged(renderer);
@@ -37,7 +61,15 @@ export class Highlighter {
 			return true;
 		}
 		if (!this.ensurePatched(renderer)) return false;
-		this.active.set(renderer, rgb);
+		const key = specKey(spec);
+		// Same highlight as now: no redraw (the legend re-checks it on every tick).
+		if (this.active.get(renderer)?.key === key) return true;
+		this.active.set(renderer, {
+			rgbs: new Set(spec.rgbs),
+			ids: new Set(spec.ids),
+			alpha: spec.hideOthers ? 0 : DIM_ALPHA,
+			key,
+		});
 		this.safeChanged(renderer);
 		return true;
 	}
@@ -83,10 +115,10 @@ export class Highlighter {
 				original.call(this);
 				if (!state.on) return;
 				try {
-					const rgb = active.get(this.renderer);
-					if (rgb === undefined || nodeRgb(this) === rgb) return;
-					if (this.circle) this.circle.alpha = Math.min(this.circle.alpha, DIM_ALPHA);
-					if (this.text) this.text.alpha = Math.min(this.text.alpha, DIM_ALPHA);
+					const spec = active.get(this.renderer);
+					if (spec === undefined || keeps(spec, this)) return;
+					if (this.circle) this.circle.alpha = Math.min(this.circle.alpha, spec.alpha);
+					if (this.text) this.text.alpha = Math.min(this.text.alpha, spec.alpha);
 				} catch {
 					// never break the graph's own drawing
 				}
@@ -106,11 +138,11 @@ export class Highlighter {
 						original.call(this);
 						if (!state.on) return;
 						try {
-							const rgb = active.get(this.renderer);
-							if (rgb === undefined) return;
-							if (nodeRgb(this.source) === rgb && nodeRgb(this.target) === rgb) return;
-							if (this.line) this.line.alpha = Math.min(this.line.alpha, DIM_ALPHA);
-							if (this.arrow) this.arrow.alpha = Math.min(this.arrow.alpha, DIM_ALPHA);
+							const spec = active.get(this.renderer);
+							if (spec === undefined) return;
+							if (keeps(spec, this.source) && keeps(spec, this.target)) return;
+							if (this.line) this.line.alpha = Math.min(this.line.alpha, spec.alpha);
+							if (this.arrow) this.arrow.alpha = Math.min(this.arrow.alpha, spec.alpha);
 						} catch {
 							// ignore
 						}

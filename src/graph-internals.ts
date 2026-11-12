@@ -169,3 +169,89 @@ export function rewriteRawGroups(raw: unknown, rewrite: (q: string) => string): 
 	});
 	return { groups, changed };
 }
+
+/**
+ * Sets the color of one color group (matched by query) in an open graph view.
+ * The view saves its own settings after that. Returns true if something changed.
+ */
+export function setLiveGroupColor(view: View, query: string, rgb: number): boolean {
+	try {
+		const v = view as GraphLikeView & { dataEngine?: { updateSearch?: () => void }; engine?: { updateSearch?: () => void } };
+		const engine = v.dataEngine ?? v.engine;
+		const opts = engine?.colorGroupOptions as WritableColorGroupOptions | undefined;
+		if (!opts || typeof opts.getColoredQueries !== "function" || typeof opts.setColorQueries !== "function") return false;
+		let changed = false;
+		const next = opts.getColoredQueries().map((g) => {
+			if (g.query !== query || (g.color && g.color.rgb === rgb)) return { query: g.query, color: g.color };
+			changed = true;
+			return { query: g.query, color: { a: g.color?.a ?? 1, rgb } };
+		});
+		if (!changed) return false;
+		opts.setColorQueries(next);
+		if (typeof engine?.updateSearch === "function") engine.updateSearch();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Sets the color of one group in a raw colorGroups array (as stored in graph.json). */
+export function setRawGroupColor(raw: unknown, query: string, rgb: number): { groups: unknown[]; changed: boolean } | null {
+	if (!Array.isArray(raw)) return null;
+	let changed = false;
+	const groups = raw.map((g: unknown) => {
+		if (!isObject(g) || g.query !== query) return g;
+		const color = isObject(g.color) ? g.color : {};
+		if (color.rgb === rgb) return g;
+		changed = true;
+		return { ...g, color: { ...color, a: typeof color.a === "number" ? color.a : 1, rgb } };
+	});
+	return { groups, changed };
+}
+
+/**
+ * Replaces the whole list of color groups of an open graph view (new order, new or changed groups).
+ * The view saves its own settings after that. Returns false if the view's groups are not reachable.
+ */
+export function setLiveGroups(view: View, groups: ColorGroup[]): boolean {
+	try {
+		const v = view as GraphLikeView & { dataEngine?: { updateSearch?: () => void }; engine?: { updateSearch?: () => void } };
+		const engine = v.dataEngine ?? v.engine;
+		const opts = engine?.colorGroupOptions as WritableColorGroupOptions | undefined;
+		if (!opts || typeof opts.getColoredQueries !== "function" || typeof opts.setColorQueries !== "function") return false;
+		opts.setColorQueries(groups.map((g) => ({ query: g.query, color: { a: g.alpha, rgb: g.rgb } })));
+		if (typeof engine?.updateSearch === "function") engine.updateSearch();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The stored colorGroups array (graph.json) rewritten to the given list.
+ * Groups that were there keep any extra fields they had; the same query may appear more than once.
+ */
+export function mergeRawGroups(raw: unknown, groups: ColorGroup[]): unknown[] {
+	const pool = Array.isArray(raw) ? raw.filter(isObject) : [];
+	const used = new Set<Record<string, unknown>>();
+	return groups.map((g) => {
+		const old = pool.find((x) => !used.has(x) && x.query === g.query);
+		if (old) used.add(old);
+		const color = old && isObject(old.color) ? old.color : {};
+		return { ...(old ?? {}), query: g.query, color: { ...color, a: g.alpha, rgb: g.rgb } };
+	});
+}
+
+/** Opens Obsidian's own search with a query (core Search plugin). Returns false if it is off. */
+export function openGlobalSearch(app: unknown, query: string): boolean {
+	try {
+		const a = app as { internalPlugins?: { getPluginById?: (id: string) => { enabled?: boolean; instance?: unknown } | null } };
+		const plugin = a.internalPlugins?.getPluginById?.("global-search");
+		const inst = plugin?.instance as { openGlobalSearch?: (q: string) => void } | undefined;
+		if (!plugin?.enabled || typeof inst?.openGlobalSearch !== "function") return false;
+		inst.openGlobalSearch(query);
+		return true;
+	} catch {
+		return false;
+	}
+}

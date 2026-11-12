@@ -1,8 +1,10 @@
 import { ButtonComponent, Modal, Notice, Setting } from "obsidian";
 import { t } from "./i18n";
 import { labelFromQuery } from "./labels";
+import type { Legend } from "./legend";
 import type GraphColorLegendPlugin from "./main";
-import { countNotesWithTag, findTagUsage, renameTagInNotes, TagUsage } from "./tag-rename";
+import { MAX_UNDO_BYTES } from "./history";
+import { countNotesWithTag, findTagUsage, TagUsage } from "./tag-rename";
 import { bareTag, extractTags, validateTag } from "./tags";
 
 const MAX_LISTED = 200;
@@ -22,6 +24,10 @@ export class EntryModal extends Modal {
 		private plugin: GraphColorLegendPlugin,
 		private query: string,
 		private mode: "legend" | "tag",
+		/** Color of the graph color group behind this entry, if there is one. */
+		private rgb: number | null = null,
+		/** The legend the dialog was opened from; it shows the "Undo" message. */
+		private legend: Legend | null = null,
 	) {
 		super(plugin.app);
 	}
@@ -72,6 +78,7 @@ export class EntryModal extends Modal {
 		this.oldTag = [...tags].sort((a, b) => uses(a) - uses(b))[0] ?? "";
 
 		contentEl.createEl("p", { cls: "gcl-modal-desc", text: str.tagDesc });
+		if (this.rgb !== null) this.buildColorSetting();
 		if (tags.length > 1) {
 			new Setting(contentEl).setName(str.tagWhich).addDropdown((d) => {
 				for (const tag of tags) d.addOption(tag, "#" + tag);
@@ -103,6 +110,33 @@ export class EntryModal extends Modal {
 		this.previewEl = contentEl.createDiv({ cls: "gcl-preview" });
 	}
 
+	/** Color of the group in the graph settings; applied right away, like the graph's own Groups section. */
+	private buildColorSetting(): void {
+		const str = t();
+		let timer = 0;
+		const hex = "#" + ((this.rgb ?? 0) & 0xffffff).toString(16).padStart(6, "0");
+		new Setting(this.contentEl)
+			.setName(str.groupColor)
+			.setDesc(str.groupColorDesc)
+			.addColorPicker((c) => {
+				c.setValue(hex);
+				c.onChange((value) => {
+					window.clearTimeout(timer);
+					timer = window.setTimeout(() => void this.applyColor(value), 250);
+				});
+			});
+	}
+
+	private async applyColor(value: string): Promise<void> {
+		const m = /^#?([0-9a-f]{6})$/i.exec(value.trim());
+		if (!m) return;
+		const rgb = parseInt(m[1], 16);
+		if (rgb === this.rgb) return;
+		const ok = this.rgb === null ? false : await this.plugin.changeGroupColor(this.query, this.rgb, rgb);
+		if (ok) this.rgb = rgb;
+		else new Notice(t().colorFailed, 8000);
+	}
+
 	onClose(): void {
 		this.contentEl.empty();
 	}
@@ -110,10 +144,11 @@ export class EntryModal extends Modal {
 	private async saveName(value: string): Promise<void> {
 		const s = this.plugin.settings;
 		const v = value.trim();
-		if (v) s.names[this.query] = v;
-		else delete s.names[this.query];
 		this.close();
-		await this.plugin.saveSettingsAndRefresh();
+		await this.plugin.recordSettings(t().stepRename(this.plugin.displayName(this.query)), () => {
+			if (v) s.names[this.query] = v;
+			else delete s.names[this.query];
+		});
 	}
 
 	private clearPreview(): void {
@@ -160,7 +195,8 @@ export class EntryModal extends Modal {
 		if (usage.length > MAX_LISTED) {
 			list.createEl("li", { cls: "gcl-preview-more", text: str.tagMore(usage.length - MAX_LISTED) });
 		}
-		el.createDiv({ cls: "gcl-preview-warning", text: str.tagWarning });
+		const undoable = usage.reduce((sum, u) => sum + u.file.stat.size, 0) <= MAX_UNDO_BYTES;
+		el.createDiv({ cls: undoable ? "gcl-preview-note" : "gcl-preview-warning", text: undoable ? str.tagUndoable : str.tagNotUndoable });
 
 		const actions = new Setting(el);
 		actions.addButton((b) => b.setButtonText(str.cancel).onClick(() => this.close()));
@@ -178,14 +214,17 @@ export class EntryModal extends Modal {
 		this.running = true;
 		button.setDisabled(true);
 		const old = this.oldTag;
-		const result = await renameTagInNotes(this.app, usage, old, next, (done, total) => {
-			button.setButtonText(`${done} / ${total}`);
-		});
-		const graphUpdated = await this.plugin.renameTagInGraphGroups(old, next);
+		const { result, graphUpdated, undoable } = await this.plugin.renameTagEverywhere(
+			usage,
+			old,
+			next,
+			(done, total) => button.setButtonText(`${done} / ${total}`),
+			this.legend,
+		);
 		this.running = false;
 		this.close();
 
-		new Notice(str.tagDone(old, next, result.changed), 6000);
+		if (!this.legend || !undoable) new Notice(str.tagDone(old, next, result.changed), 6000);
 		if (!graphUpdated) new Notice(str.tagGraphNotUpdated, 10000);
 		if (result.failed.length) {
 			const paths = result.failed.map((f) => f.path).join("\n");

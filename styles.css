@@ -1,6 +1,8 @@
 /* Graph Color Legend */
 .gcl-legend {
 	--gcl-font-size: 13px;
+	/* Bright blue for highlighted entries: clearly brighter than the grey of normal ones. */
+	--gcl-select: #2f8cff;
 	--gcl-bg-opacity: 85%;
 	position: absolute;
 	z-index: 1;
@@ -21,6 +23,10 @@
 	touch-action: manipulation;
 }
 .gcl-legend.is-empty-local { display: none; }
+/* Size set by dragging an edge (kept apart for the global and the local graph). */
+.gcl-legend.has-width { width: var(--gcl-width); max-width: calc(100% - 72px); }
+.gcl-legend.has-height { height: var(--gcl-height); }
+.gcl-legend.is-resizing, .gcl-legend.is-resizing * { cursor: var(--gcl-resize-cursor); }
 /* The graph's settings panel always stays above the legend. */
 .view-content.gcl-has-legend > .graph-controls { z-index: 2; }
 .gcl-legend.gcl-pos-top-left { top: 12px; left: 12px; }
@@ -56,7 +62,43 @@
 }
 .gcl-legend.is-collapsed .gcl-header { padding-right: var(--size-4-3); }
 
+.gcl-header { flex: 0 0 auto; }
+.gcl-search-toggle.is-active { color: var(--gcl-select); }
+.gcl-search {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: var(--size-2-2);
+	padding: 0 var(--size-4-2) var(--size-4-1) var(--size-4-2);
+}
+.gcl-search-field {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: var(--size-2-2);
+	padding: 0 var(--size-2-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background-color: var(--background-modifier-form-field);
+}
+.gcl-search-field:focus-within { border-color: var(--interactive-accent); }
+.gcl-search-icon { display: inline-flex; color: var(--text-faint); }
+.gcl-search-icon svg { width: 0.95em; height: 0.95em; }
+.gcl-search-input.gcl-search-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: auto;
+	padding: var(--size-2-2) 0;
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	font-size: var(--gcl-font-size);
+}
+.gcl-search-clear.is-hidden { visibility: hidden; }
 .gcl-body {
+	flex: 1 1 auto;
+	min-height: 0;
 	overflow-y: auto;
 	padding: 0 var(--size-4-1) var(--size-4-1);
 }
@@ -69,11 +111,43 @@
 	cursor: pointer;
 }
 .gcl-row:hover { background-color: var(--background-modifier-hover); }
-.gcl-row.is-pinned {
+.gcl-row.is-selected {
 	background-color: var(--background-modifier-active-hover);
-	box-shadow: inset 3px 0 0 var(--interactive-accent);
+	box-shadow: inset 3px 0 0 var(--gcl-select);
 	font-weight: var(--font-semibold);
 }
+.gcl-eye.is-selected,
+.gcl-eye.is-selected:hover { color: var(--gcl-select); }
+.gcl-clear-all.is-disabled { opacity: 0.35; }
+.menu .gcl-menu-select .menu-item-icon { color: #2f8cff; }
+
+/* Resize handles on the free sides of the legend. */
+.gcl-resize { position: absolute; z-index: 1; touch-action: none; }
+.gcl-resize-e, .gcl-resize-w { top: 8px; bottom: 8px; width: 8px; cursor: ew-resize; }
+.gcl-resize-e { right: -4px; }
+.gcl-resize-w { left: -4px; }
+.gcl-resize-n, .gcl-resize-s { left: 8px; right: 8px; height: 8px; cursor: ns-resize; }
+.gcl-resize-s { bottom: -4px; }
+.gcl-resize-n { top: -4px; }
+.gcl-resize-se, .gcl-resize-sw, .gcl-resize-ne, .gcl-resize-nw { width: 14px; height: 14px; }
+.gcl-resize-se { right: -4px; bottom: -4px; cursor: nwse-resize; }
+.gcl-resize-nw { left: -4px; top: -4px; cursor: nwse-resize; }
+.gcl-resize-sw { left: -4px; bottom: -4px; cursor: nesw-resize; }
+.gcl-resize-ne { right: -4px; top: -4px; cursor: nesw-resize; }
+/* A small grip in the free corner, shown while the pointer is over the legend. */
+.gcl-resize-se::after, .gcl-resize-sw::after, .gcl-resize-ne::after, .gcl-resize-nw::after {
+	content: "";
+	position: absolute;
+	width: 6px;
+	height: 6px;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.gcl-legend:hover .gcl-resize::after { opacity: 0.7; }
+.gcl-resize-se::after { right: 6px; bottom: 6px; border-right: 2px solid var(--text-faint); border-bottom: 2px solid var(--text-faint); }
+.gcl-resize-sw::after { left: 6px; bottom: 6px; border-left: 2px solid var(--text-faint); border-bottom: 2px solid var(--text-faint); }
+.gcl-resize-ne::after { right: 6px; top: 6px; border-right: 2px solid var(--text-faint); border-top: 2px solid var(--text-faint); }
+.gcl-resize-nw::after { left: 6px; top: 6px; border-left: 2px solid var(--text-faint); border-top: 2px solid var(--text-faint); }
 .gcl-row.is-hidden { opacity: 0.45; }
 .gcl-legend.is-editing .gcl-row { cursor: default; }
 
@@ -87,6 +161,35 @@
 	/* Ring keeps white, black and pale colors visible on any theme. */
 	box-shadow: 0 0 0 1px var(--background-primary), 0 0 0 2px var(--text-faint);
 }
+.gcl-swatch.is-attribute {
+	background-color: transparent;
+	box-shadow: inset 0 0 0 1.5px var(--text-muted);
+}
+.gcl-count {
+	flex: 0 0 auto;
+	color: var(--text-faint);
+	font-size: 0.85em;
+	font-variant-numeric: tabular-nums;
+}
+.gcl-section {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	margin-top: var(--size-4-2);
+	padding: var(--size-2-2) var(--size-4-1);
+	border-top: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	font-size: 0.85em;
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	cursor: pointer;
+}
+.gcl-section:hover { color: var(--text-normal); }
+.gcl-section-icon { display: inline-flex; }
+.gcl-section-icon svg { width: 1em; height: 1em; }
+.gcl-section-title { flex: 1 1 auto; }
+.gcl-section-count { color: var(--text-faint); font-weight: normal; }
 .gcl-label {
 	flex: 1 1 auto;
 	min-width: 0;
@@ -128,3 +231,129 @@
 .gcl-preview-path { word-break: break-all; }
 .gcl-preview-count { color: var(--text-muted); margin-left: var(--size-4-2); }
 .gcl-preview-more { color: var(--text-muted); list-style: none; }
+
+/* 2.0.0 */
+.gcl-legend.is-off { display: none; }
+.gcl-focus.is-active, .gcl-focus.is-active:hover { color: var(--gcl-select); }
+.gcl-focus-bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	margin: 0 var(--size-4-2) var(--size-4-1);
+	padding: var(--size-2-2) var(--size-4-2);
+	border-radius: var(--radius-s);
+	background-color: color-mix(in srgb, var(--gcl-select) 15%, transparent);
+	font-size: 0.9em;
+}
+.gcl-focus-text { flex: 1 1 auto; min-width: 0; }
+.gcl-focus-exit.gcl-focus-exit {
+	flex: 0 0 auto;
+	height: auto;
+	padding: var(--size-2-1) var(--size-4-2);
+	font-size: 0.9em;
+}
+/* Reorder color groups by dragging the grip (edit mode). */
+.gcl-grip {
+	flex: 0 0 auto;
+	display: inline-flex;
+	margin-left: calc(-1 * var(--size-2-2));
+	color: var(--text-faint);
+	cursor: grab;
+	touch-action: none;
+}
+.gcl-grip svg { width: 1em; height: 1em; }
+.gcl-legend.is-dragging, .gcl-legend.is-dragging * { cursor: grabbing; }
+/* Hold and drag: the entry's place stays empty while a copy follows the pointer. */
+body:not(.is-mobile) .gcl-row { cursor: grab; }
+.gcl-row.is-placeholder {
+	background-color: var(--background-modifier-hover);
+	outline: 1px dashed var(--text-faint);
+	outline-offset: -1px;
+}
+.gcl-row.is-placeholder > * { visibility: hidden; }
+.gcl-ghost {
+	position: fixed;
+	z-index: var(--layer-dragged-item, 1000);
+	left: var(--gcl-ghost-x);
+	top: var(--gcl-ghost-y);
+	width: var(--gcl-ghost-w);
+	height: var(--gcl-ghost-h);
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: var(--size-2-2) var(--size-4-1);
+	font-size: var(--gcl-ghost-font);
+	line-height: 1.3;
+	color: var(--text-normal);
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	box-shadow: var(--shadow-l);
+	/* Slightly see-through, and lifted a little: it is "in the hand". */
+	opacity: 0.8;
+	transform: scale(1.03);
+	pointer-events: none;
+	cursor: grabbing;
+}
+.gcl-ghost.is-outside { opacity: 0.45; }
+.gcl-ghost .gcl-icon-button { visibility: hidden; }
+.gcl-ghost .gcl-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcl-ghost .gcl-swatch {
+	flex: 0 0 auto;
+	width: 0.9em;
+	height: 0.9em;
+	border-radius: 50%;
+	background-color: var(--gcl-color);
+	box-shadow: 0 0 0 1px var(--background-primary), 0 0 0 2px var(--text-faint);
+}
+.gcl-ghost .gcl-swatch.is-attribute { background-color: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+.gcl-ghost .gcl-count { color: var(--text-faint); font-size: 0.85em; }
+.gcl-ghost .gcl-grip, .gcl-ghost .gcl-warn { display: inline-flex; color: var(--text-faint); }
+.gcl-ghost svg { width: 1em; height: 1em; }
+/* A group covered by a group above, or sharing its color with another group. */
+.gcl-warn { flex: 0 0 auto; display: inline-flex; color: var(--text-warning); }
+.gcl-warn svg { width: 0.95em; height: 0.95em; }
+.gcl-row.is-empty .gcl-label { color: var(--text-faint); }
+.gcl-preset-dots { display: inline-flex; gap: 3px; margin-right: var(--size-4-2); vertical-align: middle; }
+.gcl-preset-dots .gcl-swatch { width: 0.7em; height: 0.7em; }
+.gcl-notes-list { max-height: 360px; list-style: none; padding-left: var(--size-4-2); }
+.gcl-notes-list li { padding: var(--size-2-1) 0; }
+.gcl-preview-warning.is-hidden { display: none; }
+
+/* Undo and redo arrows; the message bar under the header. */
+/* Same red and green as the Load and Save buttons of the checklist template. */
+.gcl-legend { --gcl-undo: #FF0A2A; --gcl-redo: #14F08F; }
+.gcl-undo:not(.is-disabled), .gcl-undo:not(.is-disabled):hover {
+	color: var(--gcl-undo);
+	filter: drop-shadow(0 0 3px rgba(255, 20, 40, 0.65));
+}
+.gcl-redo:not(.is-disabled), .gcl-redo:not(.is-disabled):hover {
+	color: var(--gcl-redo);
+	filter: drop-shadow(0 0 3px rgba(20, 240, 143, 0.45));
+}
+.gcl-undo.is-disabled, .gcl-redo.is-disabled { opacity: 0.35; cursor: default; }
+.gcl-flash {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--size-2-2) var(--size-4-2);
+	margin: 0 var(--size-4-2) var(--size-4-1);
+	padding: var(--size-2-2) var(--size-2-2) var(--size-2-2) var(--size-4-2);
+	border-radius: var(--radius-s);
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	font-size: 0.9em;
+}
+.gcl-flash-text { flex: 1 1 8em; min-width: 0; }
+.gcl-flash-button.gcl-flash-button { height: auto; padding: var(--size-2-1) var(--size-4-2); font-size: 0.9em; }
+.gcl-flash-undo.gcl-flash-undo, .gcl-flash-undo.gcl-flash-undo:hover {
+	color: #fff;
+	background-color: var(--gcl-undo);
+	border: none;
+	box-shadow: 0 0 10px rgba(255, 20, 40, 0.65);
+}
+.gcl-flash-undo.gcl-flash-undo:hover { filter: brightness(1.1); }
+.gcl-preview-note { color: var(--text-muted); margin: var(--size-4-2) 0; }
