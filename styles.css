@@ -357,3 +357,38 @@ body:not(.is-mobile) .gcl-row { cursor: grab; }
 }
 .gcl-flash-undo.gcl-flash-undo:hover { filter: brightness(1.1); }
 .gcl-preview-note { color: var(--text-muted); margin: var(--size-4-2) 0; }
+
+/* 2.1.0: legend placed anywhere (moved by its title). The title stays reachable when the graph gets smaller. */
+.gcl-legend.gcl-pos-free {
+	--gcl-left: clamp(0px, calc(var(--gcl-x, 0) * 100%), calc(100% - 60px));
+	--gcl-top: clamp(0px, calc(var(--gcl-y, 0) * 100%), calc(100% - 32px));
+	left: var(--gcl-left);
+	top: var(--gcl-top);
+	/* Never past the graph's edges: the size is limited to the space right of and below the legend. */
+	max-width: min(320px, max(60px, calc(100% - var(--gcl-left) - 8px)));
+	max-height: max(32px, calc(100% - var(--gcl-top) - 8px));
+}
+.gcl-legend.gcl-pos-free.has-width { max-width: max(60px, calc(100% - var(--gcl-left) - 8px)); }
+.gcl-header { touch-action: none; }
+.gcl-title { cursor: grab; }
+.gcl-legend.is-moving, .gcl-legend.is-moving * { cursor: grabbing; }
+.gcl-legend.is-moving { box-shadow: var(--shadow-l); opacity: 0.92; }
+
+/* 2.1.0: compact style — tight rows for many groups or small screens. */
+.gcl-legend.is-compact { line-height: 1.15; }
+.gcl-legend.is-compact .gcl-header { padding: 2px var(--size-4-1) 2px 2px; }
+.gcl-legend.is-compact .gcl-icon-button { padding: 2px; }
+.gcl-legend.is-compact .gcl-body { padding: 0 2px 2px; }
+.gcl-legend.is-compact .gcl-row { gap: var(--size-2-3); padding: 1px var(--size-2-2); }
+.gcl-legend.is-compact .gcl-swatch { width: 0.7em; height: 0.7em; }
+.gcl-legend.is-compact .gcl-count { font-size: 0.8em; }
+.gcl-legend.is-compact .gcl-section { margin-top: var(--size-2-2); padding: 1px var(--size-2-2); }
+/* Phones keep fingertip-sized rows even in the compact style. */
+.is-mobile .gcl-legend.is-compact .gcl-row { padding: var(--size-2-3) var(--size-4-1); }
+
+/* Hidden probes: the legend picture reads the theme's colors from them. */
+.gcl-probe { display: none; }
+.gcl-probe-bg { color: var(--background-primary); }
+.gcl-probe-text { color: var(--text-normal); }
+.gcl-probe-faint { color: var(--text-faint); }
+.gcl-probe-border { color: var(--background-modifier-border); }
