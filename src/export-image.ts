@@ -58,7 +58,8 @@ export async function legendImage(host: HTMLElement, title: string, entries: Ima
 	const regular = `${fontSize}px ${family}`;
 	const bold = `600 ${fontSize}px ${family}`;
 
-	const canvas = host.doc.createElement("canvas");
+	// A detached canvas: createEl() without a parent does not put it into the page.
+	const canvas = createEl("canvas");
 	const ctx = canvas.getContext("2d");
 	if (!ctx) throw new Error("no canvas");
 
