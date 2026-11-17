@@ -21,7 +21,13 @@ import { replaceTagInQuery } from "./tags";
 import { ContentView, Legend, LegendSize, rgbToHex, SIZE_LIMITS } from "./legend";
 import { collectLegendNotes } from "./attributes";
 
-export type Position = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+export type Position = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "free";
+export type LegendStyle = "list" | "compact";
+/** Where a moved legend stands: its top-left corner as a share of the graph's width and height. */
+export interface LegendOffset {
+	x: number;
+	y: number;
+}
 
 
 export interface GraphColorLegendSettings {
@@ -52,6 +58,10 @@ export interface GraphColorLegendSettings {
 	presets: Preset[];
 	/** Own order of tags and properties in the legend (queries); entries not listed follow in the usual order. */
 	order: { tags: string[]; properties: string[] };
+	/** List: roomy rows. Compact: tight rows, for many groups or small screens. */
+	style: LegendStyle;
+	/** Place of the legend moved by its title (position "free"), kept apart for the global and the local graph. */
+	offset: { graph: LegendOffset | null; local: LegendOffset | null };
 }
 
 
@@ -86,14 +96,18 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	neighbors: false,
 	presets: [],
 	order: { tags: [], properties: [] },
+	style: "list",
+	offset: { graph: null, local: null },
 };
 // Note: DEFAULT_SETTINGS.names is never used directly; sanitizeSettings makes a fresh object.
 
-const POSITIONS: Position[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
+const POSITIONS: Position[] = ["top-left", "top-right", "bottom-left", "bottom-right", "free"];
+const STYLES: LegendStyle[] = ["list", "compact"];
 
 /** Settings the settings tab edits directly (toggles, sliders, the corner). */
 const CONTROL_KEYS = [
 	"position",
+	"style",
 	"fontSize",
 	"opacity",
 	"highlight",
@@ -117,6 +131,15 @@ function sanitizeSize(v: unknown): LegendSize | null {
 	const w = side(d.w, SIZE_LIMITS.minW);
 	const h = side(d.h, SIZE_LIMITS.minH);
 	return w === null && h === null ? null : { w, h };
+}
+
+function sanitizeOffset(v: unknown): LegendOffset | null {
+	if (typeof v !== "object" || v === null) return null;
+	const d = v as Record<string, unknown>;
+	const share = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : null);
+	const x = share(d.x);
+	const y = share(d.y);
+	return x === null || y === null ? null : { x, y };
 }
 
 function sanitizePresets(v: unknown): Preset[] {
@@ -183,6 +206,11 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		order: (() => {
 			const o = (typeof d.order === "object" && d.order !== null ? d.order : {}) as Record<string, unknown>;
 			return { tags: stringList(o.tags).slice(0, 5000), properties: stringList(o.properties).slice(0, 5000) };
+		})(),
+		style: STYLES.includes(d.style as LegendStyle) ? (d.style as LegendStyle) : DEFAULT_SETTINGS.style,
+		offset: (() => {
+			const o = (typeof d.offset === "object" && d.offset !== null ? d.offset : {}) as Record<string, unknown>;
+			return { graph: sanitizeOffset(o.graph), local: sanitizeOffset(o.local) };
 		})(),
 	};
 }
@@ -341,6 +369,34 @@ export default class GraphColorLegendPlugin extends Plugin {
 					const choices = this.settings.presets.map((p) => ({ name: p.name, count: p.groups.length }));
 					new PresetSuggestModal(this.app, choices, (name) => void this.applyPreset(legend, name)).open();
 				}
+				return true;
+			},
+		});
+		this.addCommand({
+			id: "toggle-compact",
+			name: str.cmdCompact,
+			callback: () => {
+				this.settings.style = this.settings.style === "compact" ? "list" : "compact";
+				void this.saveSettingsAndRefresh();
+			},
+		});
+		this.addCommand({
+			id: "copy-legend-image",
+			name: str.imageCopy,
+			checkCallback: (checking) => {
+				const legend = this.activeLegend();
+				if (!legend || !legend.hasGroups()) return false;
+				if (!checking) void legend.exportImage("copy");
+				return true;
+			},
+		});
+		this.addCommand({
+			id: "save-legend-image",
+			name: str.imageSave,
+			checkCallback: (checking) => {
+				const legend = this.activeLegend();
+				if (!legend || !legend.hasGroups()) return false;
+				if (!checking) void legend.exportImage("save");
 				return true;
 			},
 		});
@@ -771,6 +827,7 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 		const str = t();
 		return [
 			{ key: "position", name: str.position, desc: str.positionDesc, kind: "dropdown" },
+			{ key: "style", name: str.style, desc: str.styleDesc, kind: "dropdown" },
 			{ key: "fontSize", name: str.fontSize, desc: str.fontSizeDesc, kind: "slider", min: 10, max: 20, step: 1 },
 			{ key: "opacity", name: str.opacity, desc: str.opacityDesc, kind: "slider", min: 30, max: 100, step: 5 },
 			{ key: "highlight", name: str.highlight, desc: str.highlightDesc, kind: "toggle" },
@@ -784,7 +841,19 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 
 	private positions(): Record<string, string> {
 		const str = t();
-		return { "top-left": str.topLeft, "top-right": str.topRight, "bottom-left": str.bottomLeft, "bottom-right": str.bottomRight };
+		return {
+			"top-left": str.topLeft,
+			"top-right": str.topRight,
+			"bottom-left": str.bottomLeft,
+			"bottom-right": str.bottomRight,
+			free: str.positionFree,
+		};
+	}
+
+	/** Choices of a dropdown setting. */
+	private options(key: ControlKey): Record<string, string> {
+		const str = t();
+		return key === "style" ? { list: str.styleList, compact: str.styleCompact } : this.positions();
 	}
 
 	/**
@@ -799,7 +868,7 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			if (c.kind === "toggle") return { ...base, control: { type: "toggle", key: c.key } };
 			if (c.kind === "slider")
 				return { ...base, control: { type: "slider", key: c.key, min: c.min ?? 0, max: c.max ?? 100, step: c.step ?? 1 } };
-			return { ...base, control: { type: "dropdown", key: c.key, options: this.positions() } };
+			return { ...base, control: { type: "dropdown", key: c.key, options: this.options(c.key) } };
 		});
 		items.push({
 			type: "list",
@@ -858,7 +927,7 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			if (c.kind === "toggle") setting.addToggle((tg) => tg.setValue(s[c.key] === true).onChange(save));
 			else if (c.kind === "slider")
 				setting.addSlider((sl) => sl.setLimits(c.min ?? 0, c.max ?? 100, c.step ?? 1).setValue(Number(s[c.key])).onChange(save));
-			else setting.addDropdown((d) => d.addOptions(this.positions()).setValue(String(s[c.key])).onChange(save));
+			else setting.addDropdown((d) => d.addOptions(this.options(c.key)).setValue(String(s[c.key])).onChange(save));
 		}
 
 		new Setting(containerEl).setName(str.presets).setDesc(str.presetsDesc).setHeading();

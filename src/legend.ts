@@ -1,4 +1,4 @@
-import { Menu, TFile, View, setIcon, setTooltip } from "obsidian";
+import { Menu, Notice, TFile, View, setIcon, setTooltip } from "obsidian";
 import { AttributeEntry, Attributes, collectAttributes, collectNotes } from "./attributes";
 import { EntryModal } from "./entry-modal";
 import { ColorGroup, getRenderer, nodeRgb, readLiveGroups } from "./graph-internals";
@@ -8,6 +8,7 @@ import { HighlightSpec } from "./highlight";
 import { t } from "./i18n";
 import type GraphColorLegendPlugin from "./main";
 import { extractTags } from "./tags";
+import { copyImage, legendImage, saveImage } from "./export-image";
 
 /** A view with a content element (graph views are item views). */
 export type ContentView = View & { contentEl: HTMLElement };
@@ -103,6 +104,8 @@ export class Legend {
 	private flashMsg: Flash | null = null;
 	private flashTimer = 0;
 	private pointerInside = false;
+	/** Set when the legend was just moved by its title, so the click that ends the move does not collapse it. */
+	private justMoved = false;
 
 	constructor(
 		private plugin: GraphColorLegendPlugin,
@@ -249,6 +252,8 @@ export class Legend {
 			this.attrs.signature,
 			s.collapsed,
 			s.position,
+			s.style,
+			s.offset[this.sizeKey],
 			s.fontSize,
 			s.opacity,
 			s.highlight,
@@ -316,7 +321,12 @@ export class Legend {
 		const scroll = this.bodyEl?.scrollTop ?? 0;
 		el.empty();
 		el.className = "gcl-legend";
-		el.addClass(`gcl-pos-${s.position}`);
+		const offset = s.offset[this.sizeKey];
+		el.addClass(`gcl-pos-${this.placement()}`);
+		if (this.placement() === "free" && offset) {
+			el.setCssProps({ "--gcl-x": String(offset.x), "--gcl-y": String(offset.y) });
+		}
+		el.toggleClass("is-compact", s.style === "compact");
 		el.toggleClass("is-collapsed", s.collapsed);
 		el.toggleClass("is-editing", this.editing);
 		el.toggleClass("is-off", !s.showLegend);
@@ -340,7 +350,20 @@ export class Legend {
 			void this.plugin.saveSettingsAndRefresh();
 		});
 		const title = header.createSpan({ cls: "gcl-title", text: str.legend });
-		title.addEventListener("click", () => toggle.click());
+		setTooltip(title, str.moveHint, { placement: "bottom" });
+		title.addEventListener("click", () => {
+			if (this.justMoved) {
+				this.justMoved = false;
+				return;
+			}
+			toggle.click();
+		});
+		// Hold the title (or the empty part of the header) and move the legend anywhere on the graph.
+		header.addEventListener("pointerdown", (e) => this.armMove(e));
+		header.addEventListener("contextmenu", (e) => {
+			e.preventDefault();
+			this.openLegendMenu(e);
+		});
 
 		// The way out of "only highlighted" stays visible even when the legend is collapsed.
 		if (s.highlight && (this.focusMode || (!s.collapsed && this.selected.size > 0))) this.addFocusButton(header);
@@ -352,6 +375,7 @@ export class Legend {
 		if (this.editing) {
 			this.addBulkButtons(header);
 			this.addPresetButton(header);
+			this.addImageButton(header);
 		}
 
 		const searchBtn = header.createEl("button", { cls: "gcl-icon-button gcl-search-toggle clickable-icon" });
@@ -1095,6 +1119,152 @@ export class Legend {
 		}).open();
 	}
 
+	// ---- place, style and picture -------------------------------------------
+
+	/** The corner the legend stands in, or "free" when it was moved and its place is known. */
+	private placement(): string {
+		const s = this.plugin.settings;
+		if (s.position !== "free") return s.position;
+		return s.offset[this.sizeKey] ? "free" : "top-left";
+	}
+
+	/** Moving starts only after the pointer travels a few pixels, so a plain click still collapses the legend. */
+	private armMove(e: PointerEvent): void {
+		if (e.button !== 0) return;
+		const target = e.target;
+		if (target instanceof Element && target.closest("button, .gcl-resize")) return;
+		const win = this.el.win;
+		const startX = e.clientX;
+		const startY = e.clientY;
+		let moving = false;
+		let rect = this.el.getBoundingClientRect();
+		let box = this.view.contentEl.getBoundingClientRect();
+		let x = 0;
+		let y = 0;
+		const move = (ev: PointerEvent) => {
+			if (ev.pointerId !== e.pointerId) return;
+			if (!moving) {
+				if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return;
+				moving = true;
+				rect = this.el.getBoundingClientRect();
+				box = this.view.contentEl.getBoundingClientRect();
+				this.el.addClass("is-moving");
+			}
+			ev.preventDefault();
+			const left = Math.min(Math.max(0, rect.left - box.left + ev.clientX - startX), Math.max(0, box.width - rect.width));
+			const top = Math.min(Math.max(0, rect.top - box.top + ev.clientY - startY), Math.max(0, box.height - rect.height));
+			x = box.width > 0 ? left / box.width : 0;
+			y = box.height > 0 ? top / box.height : 0;
+			this.el.removeClass(`gcl-pos-${this.placement()}`);
+			this.el.addClass("gcl-pos-free");
+			this.el.setCssProps({ "--gcl-x": String(x), "--gcl-y": String(y) });
+		};
+		const end = (ev: PointerEvent) => {
+			if (ev.pointerId !== e.pointerId) return;
+			win.removeEventListener("pointermove", move);
+			win.removeEventListener("pointerup", end);
+			win.removeEventListener("pointercancel", end);
+			if (!moving) return;
+			this.el.removeClass("is-moving");
+			this.justMoved = true;
+			// The click (if any) comes right after pointerup; forget the flag if it does not.
+			window.setTimeout(() => (this.justMoved = false), 300);
+			const s = this.plugin.settings;
+			s.position = "free";
+			s.offset[this.sizeKey] = { x, y };
+			this.signature = "";
+			void this.plugin.saveSettingsQuiet().then(() => this.update(true));
+		};
+		win.addEventListener("pointermove", move);
+		win.addEventListener("pointerup", end);
+		win.addEventListener("pointercancel", end);
+	}
+
+	/** Right-click on the header: style, place and picture of the legend. */
+	private openLegendMenu(evt: MouseEvent): void {
+		const str = t();
+		const s = this.plugin.settings;
+		const menu = new Menu();
+		for (const style of ["list", "compact"] as const) {
+			menu.addItem((item) =>
+				item
+					.setTitle(style === "list" ? str.styleList : str.styleCompact)
+					.setIcon(style === "list" ? "list" : "list-collapse")
+					.setChecked(s.style === style)
+					.onClick(() => {
+						s.style = style;
+						void this.plugin.saveSettingsAndRefresh();
+					}),
+			);
+		}
+		if (s.position === "free") {
+			menu.addSeparator();
+			menu.addItem((item) =>
+				item
+					.setTitle(str.backToCorner)
+					.setIcon("corner-up-left")
+					.onClick(() => {
+						s.position = "top-left";
+						s.offset[this.sizeKey] = null;
+						void this.plugin.saveSettingsAndRefresh();
+					}),
+			);
+		}
+		if (this.hasGroups()) {
+			menu.addSeparator();
+			this.addImageItems(menu);
+		}
+		this.plugin.showMenu(menu, evt);
+	}
+
+	private addImageItems(menu: Menu): void {
+		const str = t();
+		menu.addItem((item) => item.setTitle(str.imageCopy).setIcon("copy").onClick(() => void this.exportImage("copy")));
+		menu.addItem((item) => item.setTitle(str.imageSave).setIcon("image-down").onClick(() => void this.exportImage("save")));
+	}
+
+	private addImageButton(header: HTMLElement): void {
+		const str = t();
+		if (!this.hasGroups()) return;
+		const btn = header.createEl("button", { cls: "gcl-icon-button gcl-image clickable-icon" });
+		setIcon(btn, "image");
+		btn.setAttr("aria-label", str.imageMenu);
+		setTooltip(btn, str.imageMenu);
+		btn.addEventListener("click", (e) => {
+			const menu = new Menu();
+			this.addImageItems(menu);
+			this.plugin.showMenu(menu, e);
+		});
+	}
+
+	/** True when the legend lists at least one color group that is not hidden. */
+	hasGroups(): boolean {
+		const hidden = this.plugin.settings.hidden;
+		return this.groups.some((g) => !hidden.includes(g.query));
+	}
+
+	/** The color groups shown in the legend as a picture: copied to the clipboard or saved in the vault. */
+	async exportImage(mode: "copy" | "save"): Promise<void> {
+		const str = t();
+		const hidden = this.plugin.settings.hidden;
+		const entries = this.groups
+			.filter((g) => !hidden.includes(g.query))
+			.map((g) => ({ name: this.plugin.displayName(g.query), rgb: g.rgb }));
+		if (entries.length === 0) return;
+		try {
+			const blob = await legendImage(this.el, str.legend, entries);
+			if (mode === "copy" && (await copyImage(blob))) {
+				new Notice(str.imageCopied);
+				return;
+			}
+			// Where the clipboard cannot take images (some phones), the picture is saved instead.
+			const path = await saveImage(this.plugin.app, blob);
+			new Notice(mode === "copy" ? str.imageSavedInstead(path) : str.imageSaved(path), 8000);
+		} catch {
+			new Notice(str.imageFailed, 8000);
+		}
+	}
+
 	// ---- size -------------------------------------------------------------
 
 	private applySize(size: LegendSize | null): void {
@@ -1113,7 +1283,9 @@ export class Legend {
 	 * (top-left legend: right edge, bottom edge and their corner).
 	 */
 	private addResizeHandles(): void {
-		const pos = this.plugin.settings.position;
+		// A moved legend is placed by its top-left corner, so it grows to the right and down.
+		const placed = this.placement();
+		const pos = placed === "free" ? "top-left" : placed;
 		const x = pos.endsWith("left") ? "e" : "w";
 		const y = pos.startsWith("top") ? "s" : "n";
 		for (const dir of [x, y, y + x]) {
