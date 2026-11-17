@@ -39,7 +39,7 @@ export const en = {
 	cancel: "Cancel",
 	// settings
 	position: "Position",
-	positionDesc: "Corner of the graph where the legend is shown.",
+	positionDesc: "Where the legend is shown. You can also drag its title to place it anywhere on the graph.",
 	topLeft: "Top left",
 	topRight: "Top right",
 	bottomLeft: "Bottom left",
@@ -167,6 +167,22 @@ export const en = {
 	stepRenameTag: (a: string, b: string, n: number) => `#${a} → #${b} (${n} ${n === 1 ? "note" : "notes"})`,
 	tagUndoable: "You can undo this with the ↶ arrow in the legend until Obsidian restarts. Notes you edit after the rename are not touched by the undo.",
 	tagNotUndoable: "This rename is too large to undo (over 20 MB of notes). Make a backup first.",
+	// 2.1.0
+	style: "Style",
+	styleDesc: "List: roomy rows. Compact: tight rows, for many groups or small screens.",
+	styleList: "List",
+	styleCompact: "Compact",
+	positionFree: "Anywhere (drag the title)",
+	moveHint: "Click to collapse. Hold and drag to move the legend.",
+	backToCorner: "Back to the corner",
+	cmdCompact: "Switch between list and compact style",
+	imageMenu: "Legend as an image",
+	imageCopy: "Copy legend as image",
+	imageSave: "Save legend as image",
+	imageCopied: "Legend image copied.",
+	imageSaved: (p: string) => `Legend image saved: ${p}`,
+	imageSavedInstead: (p: string) => `The clipboard does not take images here, so the image was saved: ${p}`,
+	imageFailed: "Could not create the legend image.",
 };
 
 export type Strings = typeof en;
