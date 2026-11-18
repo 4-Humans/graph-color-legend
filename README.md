@@ -123,7 +123,7 @@ npm run build   # type check and production build
 npx eslint .    # lint with the official Obsidian rules
 ```
 
-Releases are built and signed by GitHub Actions; see [CONTRIBUTING.md](CONTRIBUTING.md) for how to help with code or translations.
+Releases are built and signed by GitHub Actions; see [CONTRIBUTING.md](CONTRIBUTING.md) for how to help with code or translations. See the [changelog](CHANGELOG.md) for what changed in each version.
 
 ## Support
 
