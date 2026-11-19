@@ -37,6 +37,8 @@ export interface GraphColorLegendSettings {
 	opacity: number;
 	highlight: boolean;
 	showInLocalGraph: boolean;
+	/** Color groups with no nodes in the graph are left out of the legend (still shown in edit mode and search). */
+	hideEmpty: boolean;
 	/** Extra legend sections: tags and properties of the notes in the graph. */
 	showTags: boolean;
 	showProperties: boolean;
@@ -56,6 +58,8 @@ export interface GraphColorLegendSettings {
 	neighbors: boolean;
 	/** Saved sets of color groups. */
 	presets: Preset[];
+	/** Automatic copy of the global graph's color groups, offered back when they all disappear. */
+	groupsBackup: ColorGroup[];
 	/** Own order of tags and properties in the legend (queries); entries not listed follow in the usual order. */
 	order: { tags: string[]; properties: string[] };
 	/** List: roomy rows. Compact: tight rows, for many groups or small screens. */
@@ -85,6 +89,7 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	opacity: 85,
 	highlight: true,
 	showInLocalGraph: true,
+	hideEmpty: true,
 	showTags: true,
 	showProperties: true,
 	collapsedSections: ["properties"],
@@ -95,6 +100,7 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	showLegend: true,
 	neighbors: false,
 	presets: [],
+	groupsBackup: [],
 	order: { tags: [], properties: [] },
 	style: "list",
 	offset: { graph: null, local: null },
@@ -112,6 +118,7 @@ const CONTROL_KEYS = [
 	"opacity",
 	"highlight",
 	"showInLocalGraph",
+	"hideEmpty",
 	"showTags",
 	"showProperties",
 	"neighbors",
@@ -142,6 +149,18 @@ function sanitizeOffset(v: unknown): LegendOffset | null {
 	return x === null || y === null ? null : { x, y };
 }
 
+function sanitizeGroupList(v: unknown): ColorGroup[] {
+	const groups: ColorGroup[] = [];
+	for (const g of Array.isArray(v) ? v.slice(0, MAX_PRESET_GROUPS) : []) {
+		if (typeof g !== "object" || g === null) continue;
+		const x = g as Record<string, unknown>;
+		if (typeof x.query !== "string" || typeof x.rgb !== "number" || !Number.isFinite(x.rgb)) continue;
+		const alpha = typeof x.alpha === "number" && Number.isFinite(x.alpha) ? Math.min(1, Math.max(0, x.alpha)) : 1;
+		groups.push({ query: x.query.slice(0, 1000), rgb: Math.round(x.rgb) & 0xffffff, alpha });
+	}
+	return groups;
+}
+
 function sanitizePresets(v: unknown): Preset[] {
 	if (!Array.isArray(v)) return [];
 	const out: Preset[] = [];
@@ -150,15 +169,7 @@ function sanitizePresets(v: unknown): Preset[] {
 		const d = p as Record<string, unknown>;
 		const name = typeof d.name === "string" ? d.name.trim().slice(0, 100) : "";
 		if (!name || out.some((x) => x.name === name)) continue;
-		const groups: ColorGroup[] = [];
-		for (const g of Array.isArray(d.groups) ? d.groups.slice(0, MAX_PRESET_GROUPS) : []) {
-			if (typeof g !== "object" || g === null) continue;
-			const x = g as Record<string, unknown>;
-			if (typeof x.query !== "string" || typeof x.rgb !== "number" || !Number.isFinite(x.rgb)) continue;
-			const alpha = typeof x.alpha === "number" && Number.isFinite(x.alpha) ? Math.min(1, Math.max(0, x.alpha)) : 1;
-			groups.push({ query: x.query.slice(0, 1000), rgb: Math.round(x.rgb) & 0xffffff, alpha });
-		}
-		out.push({ name, groups });
+		out.push({ name, groups: sanitizeGroupList(d.groups) });
 	}
 	return out;
 }
@@ -188,6 +199,7 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		highlight: typeof d.highlight === "boolean" ? d.highlight : DEFAULT_SETTINGS.highlight,
 		showInLocalGraph:
 			typeof d.showInLocalGraph === "boolean" ? d.showInLocalGraph : DEFAULT_SETTINGS.showInLocalGraph,
+		hideEmpty: typeof d.hideEmpty === "boolean" ? d.hideEmpty : DEFAULT_SETTINGS.hideEmpty,
 		showTags: typeof d.showTags === "boolean" ? d.showTags : DEFAULT_SETTINGS.showTags,
 		showProperties: typeof d.showProperties === "boolean" ? d.showProperties : DEFAULT_SETTINGS.showProperties,
 		collapsedSections: Array.isArray(d.collapsedSections)
@@ -203,6 +215,7 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		showLegend: typeof d.showLegend === "boolean" ? d.showLegend : DEFAULT_SETTINGS.showLegend,
 		neighbors: typeof d.neighbors === "boolean" ? d.neighbors : DEFAULT_SETTINGS.neighbors,
 		presets: sanitizePresets(d.presets),
+		groupsBackup: sanitizeGroupList(d.groupsBackup),
 		order: (() => {
 			const o = (typeof d.order === "object" && d.order !== null ? d.order : {}) as Record<string, unknown>;
 			return { tags: stringList(o.tags).slice(0, 5000), properties: stringList(o.properties).slice(0, 5000) };
@@ -281,6 +294,14 @@ export default class GraphColorLegendPlugin extends Plugin {
 	}
 
 	private openMenu: Menu | null = null;
+
+	/** Opens this plugin's tab in Obsidian's settings (the settings window is not in the public API). */
+	openSettings(): void {
+		const setting = (this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => unknown } }).setting;
+		if (typeof setting?.open !== "function") return;
+		setting.open();
+		setting.openTabById?.(this.manifest.id);
+	}
 
 	/**
 	 * Only one legend menu at a time. Obsidian closes a menu on a click outside it, but the legend
@@ -649,6 +670,29 @@ export default class GraphColorLegendPlugin extends Plugin {
 		await this.changeGroups(legend, preset.groups.map((g) => ({ ...g })), t().stepPreset(name), t().presetApplied(name));
 	}
 
+	/** Keeps a copy of the global graph's color groups; never overwritten with an empty list. */
+	rememberGroups(groups: ColorGroup[]): void {
+		if (groups.length === 0) return;
+		const next = groups.slice(0, MAX_PRESET_GROUPS).map((g) => ({ ...g }));
+		const key = (list: ColorGroup[]) => JSON.stringify(list.map((g) => [g.query, g.rgb, g.alpha]));
+		if (key(next) === key(this.settings.groupsBackup)) return;
+		this.settings.groupsBackup = next;
+		void this.saveData(this.settings);
+	}
+
+	/** Puts the saved copy back after the groups disappeared (for example "Restore default settings" of the graph). */
+	async restoreGroupsBackup(legend: Legend): Promise<void> {
+		const backup = this.settings.groupsBackup.map((g) => ({ ...g }));
+		if (backup.length === 0) return;
+		await this.changeGroups(legend, backup, t().stepRestoreGroups, t().groupsRestored);
+	}
+
+	/** "Not needed": the groups were removed on purpose, so the copy is dropped. */
+	async dropGroupsBackup(): Promise<void> {
+		this.settings.groupsBackup = [];
+		await this.saveSettingsAndRefresh();
+	}
+
 	rememberQueries(queries: string[]): void {
 		const known = this.settings.knownQueries;
 		if (queries.length === known.length && queries.every((q, i) => q === known[i])) return;
@@ -832,6 +876,7 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			{ key: "opacity", name: str.opacity, desc: str.opacityDesc, kind: "slider", min: 30, max: 100, step: 5 },
 			{ key: "highlight", name: str.highlight, desc: str.highlightDesc, kind: "toggle" },
 			{ key: "showInLocalGraph", name: str.localGraph, desc: str.localGraphDesc, kind: "toggle" },
+			{ key: "hideEmpty", name: str.hideEmpty, desc: str.hideEmptyDesc, kind: "toggle" },
 			{ key: "showTags", name: str.showTags, desc: str.showTagsDesc, kind: "toggle" },
 			{ key: "showProperties", name: str.showProperties, desc: str.showPropertiesDesc, kind: "toggle" },
 			{ key: "neighbors", name: str.neighbors, desc: str.neighborsDesc, kind: "toggle" },

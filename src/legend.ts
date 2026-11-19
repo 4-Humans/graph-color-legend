@@ -18,6 +18,9 @@ export function rgbToHex(rgb: number): string {
 }
 
 /** Legend size set by dragging its edge; a null side means "fit the content". */
+/** How long the global graph must stay without color groups before the legend offers the saved copy. */
+const LOST_GROUPS_MS = 2000;
+
 export interface LegendSize {
 	w: number | null;
 	h: number | null;
@@ -102,6 +105,8 @@ export class Legend {
 	/** An entry is being dragged: the legend is not redrawn meanwhile. */
 	private drag = false;
 	private flashMsg: Flash | null = null;
+	/** Since when the global graph has had no color groups at all (a moment of loading is not a loss). */
+	private noGroupsSince: number | null = null;
 	private flashTimer = 0;
 	private pointerInside = false;
 	/** Set when the legend was just moved by its title, so the click that ends the move does not collapse it. */
@@ -238,6 +243,7 @@ export class Legend {
 		const groups = live ?? (this.isLocal ? [] : (this.plugin.fileGroups ?? []));
 		this.refreshAttributes(force, groups);
 		this.countColors();
+		this.watchGroups(groups);
 		const s = this.plugin.settings;
 		const sig = JSON.stringify([
 			[...this.colorCounts],
@@ -259,6 +265,8 @@ export class Legend {
 			s.highlight,
 			s.showTags,
 			s.showProperties,
+			s.hideEmpty,
+			this.groupsLost(),
 			s.collapsedSections,
 			s.names,
 			s.hidden,
@@ -403,9 +411,16 @@ export class Legend {
 			this.update(true);
 		});
 
+		const settingsBtn = header.createEl("button", { cls: "gcl-icon-button gcl-settings clickable-icon" });
+		setIcon(settingsBtn, "settings");
+		settingsBtn.setAttr("aria-label", str.openSettings);
+		setTooltip(settingsBtn, str.openSettings);
+		settingsBtn.addEventListener("click", () => this.plugin.openSettings());
+
 		this.searchInput = null;
 		if (this.searchOpen) this.renderSearchBox();
 		if (this.flashMsg) this.renderFlash(this.flashMsg);
+		if (this.groupsLost()) this.renderLostBar();
 		if (this.focusMode) this.renderFocusBar();
 
 		const body = el.createDiv({ cls: "gcl-body" });
@@ -542,6 +557,37 @@ export class Legend {
 		}, ms);
 	}
 
+	/** Remembers the groups of the global graph, and notes when they have all gone. */
+	private watchGroups(groups: ColorGroup[]): void {
+		if (this.isLocal) return;
+		if (groups.length > 0) {
+			this.noGroupsSince = null;
+			this.plugin.rememberGroups(groups);
+		} else if (this.noGroupsSince === null) {
+			this.noGroupsSince = Date.now();
+		}
+	}
+
+	/** All color groups of the global graph are gone, but the plugin has a copy of them. */
+	private groupsLost(): boolean {
+		return (
+			!this.isLocal &&
+			this.noGroupsSince !== null &&
+			Date.now() - this.noGroupsSince >= LOST_GROUPS_MS &&
+			this.plugin.settings.groupsBackup.length > 0
+		);
+	}
+
+	private renderLostBar(): void {
+		const str = t();
+		const bar = this.el.createDiv({ cls: "gcl-flash gcl-lost" });
+		bar.createSpan({ cls: "gcl-flash-text", text: str.groupsLost(this.plugin.settings.groupsBackup.length) });
+		const restore = bar.createEl("button", { cls: "gcl-flash-button gcl-flash-redo", text: str.groupsRestore });
+		restore.addEventListener("click", () => void this.plugin.restoreGroupsBackup(this));
+		const drop = bar.createEl("button", { cls: "gcl-flash-button gcl-flash-undo", text: str.groupsKeepEmpty });
+		drop.addEventListener("click", () => void this.plugin.dropGroupsBackup());
+	}
+
 	private renderFlash(f: Flash): void {
 		const str = t();
 		const bar = this.el.createDiv({ cls: "gcl-flash" });
@@ -671,6 +717,9 @@ export class Legend {
 		for (const entry of entries) {
 			const state = this.stateOf(entry.query);
 			if (state === "hidden" && !this.editing) continue;
+			const info = entry.index !== undefined ? this.groupInfo(entry.index) : null;
+			// An empty group stays out of the way, except in edit mode, while searching or while highlighted.
+			if (info && state === "visible" && !this.editing && !this.searching() && this.isEmpty(info)) continue;
 			const row = body.createDiv({ cls: "gcl-row" });
 			row.toggleClass("is-hidden", state === "hidden");
 			row.toggleClass("is-selected", state === "selected");
@@ -707,8 +756,7 @@ export class Legend {
 			setTooltip(row, entry.query ? `${entry.query}\n${str.menuHint}` : str.menuHint, {
 				placement: s.position.endsWith("right") ? "left" : "right",
 			});
-			if (entry.index !== undefined) {
-				const info = this.groupInfo(entry.index);
+			if (info) {
 				if (info.warnings.length > 0) {
 					const warn = row.createSpan({ cls: "gcl-warn" });
 					// Lucide renamed this icon; older Obsidian versions only know the old name.
@@ -1214,6 +1262,8 @@ export class Legend {
 			menu.addSeparator();
 			this.addImageItems(menu);
 		}
+		menu.addSeparator();
+		menu.addItem((item) => item.setTitle(str.openSettings).setIcon("settings").onClick(() => this.plugin.openSettings()));
 		this.plugin.showMenu(menu, evt);
 	}
 
@@ -1237,18 +1287,29 @@ export class Legend {
 		});
 	}
 
+	/**
+	 * A group the "hide empty groups" setting leaves out: no nodes in this graph. That includes a group whose
+	 * notes all go to groups above (a catch-all group kept last); edit mode still shows it with its warning.
+	 */
+	private isEmpty(info: GroupInfo): boolean {
+		return this.plugin.settings.hideEmpty && info.count === 0;
+	}
+
+	/** Color groups the legend shows: not hidden by the eye and not left out as empty. */
+	private shownGroups(): ColorGroup[] {
+		const hidden = this.plugin.settings.hidden;
+		return this.groups.filter((g, i) => !hidden.includes(g.query) && !this.isEmpty(this.groupInfo(i)));
+	}
+
 	/** True when the legend lists at least one color group that is not hidden. */
 	hasGroups(): boolean {
-		const hidden = this.plugin.settings.hidden;
-		return this.groups.some((g) => !hidden.includes(g.query));
+		return this.shownGroups().length > 0;
 	}
 
 	/** The color groups shown in the legend as a picture: copied to the clipboard or saved in the vault. */
 	async exportImage(mode: "copy" | "save"): Promise<void> {
 		const str = t();
-		const hidden = this.plugin.settings.hidden;
-		const entries = this.groups
-			.filter((g) => !hidden.includes(g.query))
+		const entries = this.shownGroups()
 			.map((g) => ({ name: this.plugin.displayName(g.query), rgb: g.rgb }));
 		if (entries.length === 0) return;
 		try {
