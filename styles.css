@@ -356,6 +356,14 @@ body:not(.is-mobile) .gcl-row { cursor: grab; }
 	box-shadow: 0 0 10px rgba(255, 20, 40, 0.65);
 }
 .gcl-flash-undo.gcl-flash-undo:hover { filter: brightness(1.1); }
+/* The green one: confirm (restore). Dark text, because the green is light. */
+.gcl-flash-redo.gcl-flash-redo, .gcl-flash-redo.gcl-flash-redo:hover {
+	color: #04210f;
+	background-color: var(--gcl-redo);
+	border: none;
+	box-shadow: 0 0 10px rgba(20, 240, 143, 0.55);
+}
+.gcl-flash-redo.gcl-flash-redo:hover { filter: brightness(1.1); }
 .gcl-preview-note { color: var(--text-muted); margin: var(--size-4-2) 0; }
 
 /* 2.1.0: legend placed anywhere (moved by its title). The title stays reachable when the graph gets smaller. */

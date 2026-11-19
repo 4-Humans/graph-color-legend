@@ -2,6 +2,12 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.2.0 (2026-11-19)
+
+- **Hide empty groups.** A color group with no notes in the graph, for example one whose pages are all filtered out, is no longer listed as a faint row with 0. A new setting, on by default; turn it off to see every color, for example in a local graph. This includes a catch-all group kept last whose notes all go to groups above. Edit mode (with the warning) and search still show empty groups, so they can be found, renamed and moved. The legend picture leaves them out too.
+- **Safety copy of the color groups.** The plugin keeps a copy of the global graph's color groups. If they all disappear, for example after "Restore default settings" in the graph's own settings (that button clears every group), the legend shows a bar with "Restore", which puts them back (and can be undone). "Not needed" drops the copy, for when you removed the groups on purpose.
+- **Settings at hand.** A gear button in the legend header, next to the pencil, opens the plugin settings. The header's right-click menu has the same item.
+
 ## 2.1.2 (2026-11-18)
 
 - Documentation only: added this changelog and a link to it in the README. The plugin itself is unchanged.

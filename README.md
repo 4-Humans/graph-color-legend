@@ -55,7 +55,7 @@ Details: everything read from files is shown as plain text, settings are checked
 <details>
 <summary>All features in detail</summary>
 
-- **Legend on the graph.** Every color group from the graph settings (Groups) is listed with its color. Works in the global graph and in the local graph.
+- **Legend on the graph.** Every color group from the graph settings (Groups) is listed with its color. Works in the global graph and in the local graph. Groups with no notes in the graph are left out (a setting).
 - **Tags and properties.** Below the color groups, two collapsible sections list the tags and the property values (for example `status: done`) of the notes that the graph shows, with the number of notes. They can be highlighted like groups; the notes keep their own colors. Both sections can be turned off in the settings.
 - **Anywhere on the graph.** Drag the legend by its title to any place on the graph; a short click on the title still collapses it. The place is kept separately for the global and the local graph and stays inside the graph when the window gets smaller. Right-click the header and choose “Back to the corner” to return it.
 - **List or compact.** Two styles: a roomy list, or compact rows for many groups and small screens. Switch in the settings, in the header’s right-click menu or with a command.
@@ -89,11 +89,21 @@ Details: everything read from files is shown as plain text, settings are checked
 - Font size and background opacity.
 - Highlight on hover: on or off.
 - Show in local graph: on or off. A local graph without its own color groups gets no legend.
+- Hide empty groups: on by default. A color group with no notes in this graph is left out of the legend, also when groups above take all its notes (a catch-all group kept last). Edit mode, with the warning, and search still show empty groups. Turn it off to see every color, for example in a local graph.
 - Show tags, show properties: on or off.
 - Highlight linked notes: on or off.
 - Show the legend: on or off (also a command).
 - Sets of color groups: rename or delete.
 - Entries: rename or hide each entry; reset all names.
+
+The gear button in the legend header (or its right-click menu) opens these settings.
+
+</details>
+
+<details>
+<summary>If the color groups disappear</summary>
+
+The color groups belong to Obsidian's graph (Settings of the graph view, Groups), not to this plugin. The graph's **Restore default settings** button clears all of them at once, and the legend then has nothing to list. The plugin keeps a copy of the global graph's groups (queries and colors, in its own `data.json`). When all groups are gone, the legend shows a bar with **Restore**; one click puts them back, and the step can be undone with the red arrow. **Not needed** deletes the copy, for when you removed the groups on purpose. The copy follows every change of the groups, so it always holds the last non-empty set. It covers only the color groups: other graph settings reset by that button (filters, forces, display) are not restored. For those, and for a second line of defense, save the groups as a set (palette button in edit mode).
 
 </details>
 
