@@ -126,3 +126,30 @@ export function matchNotes(query: string, notes: NoteInfo[]): Set<string> | null
 	}
 	return out;
 }
+
+/**
+ * A key that is the same for queries that mean the same, so a note's `graph-legend` value finds its
+ * group even when it is written a little differently: `tag:#Work` and `#work`, extra spaces, terms in
+ * another order. Queries this evaluator does not understand only get spaces squeezed and lower case.
+ */
+export function queryKey(query: string): string {
+	const q = query.trim().slice(0, MAX_QUERY + 1);
+	const terms = parseQuery(q);
+	if (!terms) return q.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+	return terms
+		.map((t) => {
+			const not = t.not ? "-" : "";
+			switch (t.kind) {
+				case "tag":
+					return `${not}tag:${t.value}`;
+				case "prop":
+					return `${not}[${t.key}${t.value === null ? "" : ":" + t.value}]`;
+				case "path":
+					return `${not}path:${t.value}`;
+				case "file":
+					return `${not}file:${t.value}`;
+			}
+		})
+		.sort()
+		.join(" ");
+}
