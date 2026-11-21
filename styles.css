@@ -316,6 +316,7 @@ body:not(.is-mobile) .gcl-row { cursor: grab; }
 .gcl-warn { flex: 0 0 auto; display: inline-flex; color: var(--text-warning); }
 .gcl-warn svg { width: 0.95em; height: 0.95em; }
 .gcl-row.is-empty .gcl-label { color: var(--text-faint); }
+.gcl-label.is-unnamed { font-style: italic; }
 .gcl-preset-dots { display: inline-flex; gap: 3px; margin-right: var(--size-4-2); vertical-align: middle; }
 .gcl-preset-dots .gcl-swatch { width: 0.7em; height: 0.7em; }
 .gcl-notes-list { max-height: 360px; list-style: none; padding-left: var(--size-4-2); }

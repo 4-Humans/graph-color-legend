@@ -20,13 +20,25 @@ See at a glance what each color in your Obsidian graph means.
 
 ## Names in the legend
 
-Added a new color group? Give it a name: rename the entry in the legend, or create a note with the property `graph-legend`.
+Added a new color group? Give it a name: rename the entry in the legend, or describe the group in a note. A group without a name shows its query in italics, and its menu offers "Give it a name".
+
+A note describes a group with two properties:
+
+```yaml
+graph-legend: "tag:#work tag:#meeting"   # the group's query, as in the graph settings
+graph-legend-name: "Meetings"            # optional short name; without it the note's title is used
+```
+
+The query is matched by meaning: `#work`, `tag:#Work` and `tag:#work` with extra spaces all find the same group. The entry's menu gets "Open page".
 
 Each entry takes its name from the first of these that exists:
 
-1. The name you gave it in the legend.
-2. A note with the property `graph-legend: "<query>"`, where `<query>` is the group's query exactly as in the graph settings. The legend shows the note's title, and the entry's menu gets "Open page".
-3. The query itself, made readable: `[status:done]` becomes `status: done`, `tag:#work tag:#meeting` becomes `#work #meeting`.
+1. `graph-legend-name` in the note that describes it.
+2. The name you gave it in the legend, for groups without a describing note.
+3. The title of the note that describes it.
+4. The query itself, made readable: `[status:done]` becomes `status: done`, `tag:#work tag:#meeting` becomes `#work #meeting`.
+
+Renaming an entry in the legend writes to the note when the group has one, so you and your AI agent always see the same name. Otherwise the plugin keeps the name, and moves it into the note once a describing note appears.
 
 ## Vaults kept by AI agents
 
@@ -37,18 +49,24 @@ Each entry takes its name from the first of these that exists:
 ```
 When you add a color group to .obsidian/graph.json:
 1. Find or create the note that describes the group.
-2. In its front matter, add: graph-legend: "<query>"
-3. Copy <query> from graph.json exactly, character for character.
+2. In its front matter, add: graph-legend: "<query>" (the group's query from graph.json)
+3. For a short legend name, also add: graph-legend-name: "<name>"
 4. Do not edit the Graph Color Legend plugin's data.json.
 ```
 
-**Why a note property.** The agent already works with notes, so the rule is easy for it to follow. The name also survives sync and reinstalling the plugin, which names kept in the plugin's settings do not.
+**Why a note property.** The agent already works with notes, so the rule is easy for it to follow. The name also survives sync and reinstalling the plugin, which names kept in the plugin's settings do not. And it works both ways: when you rename such a group in the legend, the new name lands in the note, where the agent reads it.
+
+**Changes appear at once.** Obsidian reads `graph.json` only at startup, so a group the agent adds while Obsidian is open normally shows up only after a restart. The plugin looks at the file every two seconds: new, changed and reordered groups go to the graph at once, with a short note in the legend and **Undo**.
+
+**Removed groups wait for you.** A group that disappears from the file is not taken off the graph by itself, because an agent can delete one by mistake and nobody would notice. A window opens in the middle of the screen (when a graph is open and you are not typing) and lists those groups with their colors and names. Each has a switch, on by default: **Keep checked** puts the checked groups back into the file, **Remove all** removes them. Closing the window decides nothing: the legend shows a bar with **Review**, and the window comes back the next time Obsidian starts. Groups removed while Obsidian was closed are found at startup the same way. A group that keeps its place and color but gets a new query (a renamed tag) counts as edited, not removed.
 
 ## Privacy
 
 Everything runs inside Obsidian on your device. The plugin makes no network requests, sends nothing anywhere, collects no statistics and keeps no data outside your vault.
 
-It reads the list of notes only for two features: renaming a tag in all notes, and taking entry names from notes with the `graph-legend` property. Notes are changed only after you confirm, and the change can be undone with the arrow in the legend.
+It reads `.obsidian/graph.json` every two seconds to show changes made outside Obsidian, and writes to it only the color groups: when you reorder or edit groups, restore them, or keep groups that were removed outside Obsidian. Filters, forces and other graph settings in the file are left as they are.
+
+It reads the list of notes only for two features: renaming a tag in all notes, and taking entry names from notes with the `graph-legend` property. It writes to notes only for these too: a tag rename after you confirm it, and the `graph-legend-name` of a note that describes a group you renamed. Changes can be undone with the arrow in the legend.
 
 Details: everything read from files is shown as plain text, settings are checked when loaded, and query parsing is length-capped, so a crafted `graph.json` or `data.json` in a shared vault cannot run code or freeze the app. The bundle imports nothing but the `obsidian` module.
 
@@ -62,9 +80,9 @@ Details: everything read from files is shown as plain text, settings are checked
 - **Legend as a picture.** The header’s right-click menu, the picture button in edit mode and two commands copy the color groups as a PNG or save it where the vault keeps attachments. The picture is drawn in your theme’s colors, without buttons. Where the clipboard cannot take pictures (some phones), it is saved instead.
 - **Collapsible and resizable.** Collapse the legend to a small button; the state is remembered. Drag the free edge or corner of the legend to make it wider or taller (double-click the edge to go back to the automatic size). The size is kept separately for the global and the local graph; long lists scroll.
 - **Search.** The magnifier next to the pencil opens a search box that filters all entries by name or query as you type. The cross inside the box clears it, the cross next to it (or Esc) closes it; pressing the magnifier again selects the text so you can type a new search.
-- **Readable names.** A name is taken, in this order, from: the name you gave it in the legend; a note that describes the entry with the property `graph-legend: "<query>"` (the note's title is used, and the menu gets “Open page”); or the query itself (`[status:done]` becomes `status: done`, `tag:#work tag:#meeting` becomes `#work #meeting`).
+- **Readable names.** A name is taken, in this order, from: `graph-legend-name` in a note that describes the entry with `graph-legend: "<query>"`; the name you gave it in the legend; that note's title (the menu then gets “Open page”); or the query itself (`[status:done]` becomes `status: done`, `tag:#work tag:#meeting` becomes `#work #meeting`). Renaming in the legend writes to the describing note when there is one. Unnamed color groups are shown in italics.
 - **Menu and edit mode.** Right-click an entry (long-press on phones) for its menu: highlight it, open its page, rename it only in the legend, rename the tag everywhere, or hide it. In edit mode (the pencil button in the legend header) each entry has an eye button with three states: grey — shown, blue — highlighted, crossed out — hidden. The eye in the header goes the same round for all entries at once (highlight all → hide all → show all), and the cross clears all highlights. Hidden entries come back there or in the plugin settings.
-- **Rename a tag.** For entries built from tags, the menu offers two ways: a new name only in the legend, or renaming the tag itself in all notes (text and properties, nested tags included). Before anything changes you see the list of notes that will be edited and confirm it, and the rename can be undone with the arrow in the legend. The color group in the graph settings is updated to the new tag. The same window lets you change the group's color; it is saved in the graph settings, so the graph and the legend always show the same color.
+- **Rename a tag.** For entries built from tags, the menu offers two ways: a new name only in the legend, or renaming the tag itself in all notes (text and properties, nested tags included, and the `graph-legend` queries of describing notes). Before anything changes you see the list of notes that will be edited and confirm it, and the rename can be undone with the arrow in the legend. The color group in the graph settings is updated to the new tag. The same window lets you change the group's color; it is saved in the graph settings, so the graph and the legend always show the same color.
 - **Highlight.** Point at an entry and the other nodes fade. Click it to keep it highlighted, click again to turn it off; several entries can be highlighted at once. Highlights reset when Obsidian restarts.
 - **Only highlighted.** With something highlighted, the target button in the header hides all other nodes instead of fading them. A bar under the header says that the mode is on and has a “Show all” button; the target button (also in the collapsed legend) and a command turn it off too.
 - **Linked notes.** Optionally, highlighting an entry also keeps the notes linked to it bright (setting or command).
@@ -94,7 +112,7 @@ Details: everything read from files is shown as plain text, settings are checked
 - Highlight linked notes: on or off.
 - Show the legend: on or off (also a command).
 - Sets of color groups: rename or delete.
-- Entries: rename or hide each entry; reset all names.
+- Entries: rename or hide each entry; reset all names kept by the plugin (names in notes stay).
 
 The gear button in the legend header (or its right-click menu) opens these settings.
 

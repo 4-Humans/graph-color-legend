@@ -2,6 +2,19 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.3.0 (2026-11-21)
+
+For vaults where an AI agent writes the notes and you read the graph.
+
+- **Changes to graph.json appear at once.** Obsidian reads the graph's settings file only at startup. The plugin now looks at it every two seconds: color groups that an agent, sync or a text editor added, changed or reordered go to the graph without a restart, with a note in the legend and **Undo**. Only the groups are applied; nothing else in the file is touched.
+- **Removed groups wait for you.** A group that disappears from the file stays on the graph until you decide. A window lists such groups with their colors and names, each with a switch (on by default): **Keep checked** puts them back into the file, **Remove all** removes them. It opens when a graph is on screen and you are not typing; closing it decides nothing, the legend keeps a **Review** bar, and the window returns at the next start. Groups removed while Obsidian was closed are found at startup. Removing can be undone with the arrow.
+
+- **Names in notes.** A note can now give its color group a short name with the property `graph-legend-name`, next to `graph-legend`. Without it the legend uses the note's title, as before.
+- **Rename once, seen everywhere.** When a color group has a describing note, renaming the entry in the legend writes the name into that note (`graph-legend-name`), so you and your AI agent see the same name. Groups without such a note keep the name in the plugin, as before; when a describing note appears later, the name moves into it. If that note is deleted, the name goes back to the plugin. Can be undone with the arrow.
+- **Queries matched by meaning.** `graph-legend: "#work"` now finds the group `tag:#Work`: extra spaces, `tag:` or not, letter case of tags and properties, and the order of terms no longer matter.
+- **Fixed: tag rename lost the name.** Renaming a tag in all notes now also updates the `graph-legend` property of the notes that describe a group with that tag. Before, the group fell back to its raw query.
+- **Unnamed groups stand out.** A color group with no name shows its query in italics, its tooltip says so, and its menu offers "Give it a name".
+
 ## 2.2.0 (2026-11-19)
 
 - **Hide empty groups.** A color group with no notes in the graph, for example one whose pages are all filtered out, is no longer listed as a faint row with 0. A new setting, on by default; turn it off to see every color, for example in a local graph. This includes a catch-all group kept last whose notes all go to groups above. Edit mode (with the warning) and search still show empty groups, so they can be found, renamed and moved. The legend picture leaves them out too.
