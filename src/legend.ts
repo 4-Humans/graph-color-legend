@@ -267,11 +267,12 @@ export class Legend {
 			s.showProperties,
 			s.hideEmpty,
 			this.groupsLost(),
+			this.isLocal ? 0 : this.plugin.settings.pendingRemoved.length,
 			s.collapsedSections,
 			s.names,
 			s.hidden,
 			s.size[this.sizeKey],
-			[...this.plugin.legendNotes.keys()],
+			[...this.plugin.legendNotes].map(([k, n]) => [k, n.file.basename, n.name]),
 			this.editing,
 		]);
 		if (!force && sig === this.signature) {
@@ -421,6 +422,7 @@ export class Legend {
 		if (this.searchOpen) this.renderSearchBox();
 		if (this.flashMsg) this.renderFlash(this.flashMsg);
 		if (this.groupsLost()) this.renderLostBar();
+		if (!this.isLocal && this.plugin.settings.pendingRemoved.length > 0) this.renderRemovedBar();
 		if (this.focusMode) this.renderFocusBar();
 
 		const body = el.createDiv({ cls: "gcl-body" });
@@ -588,6 +590,15 @@ export class Legend {
 		drop.addEventListener("click", () => void this.plugin.dropGroupsBackup());
 	}
 
+	/** Groups removed from graph.json outside Obsidian wait here until the person looks at them. */
+	private renderRemovedBar(): void {
+		const str = t();
+		const bar = this.el.createDiv({ cls: "gcl-flash gcl-lost" });
+		bar.createSpan({ cls: "gcl-flash-text", text: str.removedBar(this.plugin.settings.pendingRemoved.length) });
+		const review = bar.createEl("button", { cls: "gcl-flash-button gcl-flash-redo", text: str.removedReview });
+		review.addEventListener("click", () => this.plugin.openRemovedReview());
+	}
+
 	private renderFlash(f: Flash): void {
 		const str = t();
 		const bar = this.el.createDiv({ cls: "gcl-flash" });
@@ -752,8 +763,12 @@ export class Legend {
 			// Mouse: hold the entry itself and move it.
 			row.addEventListener("pointerdown", (e) => this.armDrag(row, e));
 
-			row.createSpan({ cls: "gcl-label", text: this.plugin.displayName(entry.query) });
-			setTooltip(row, entry.query ? `${entry.query}\n${str.menuHint}` : str.menuHint, {
+			// A color group nobody named shows its raw query: say so, and how to name it.
+			const unnamed = entry.rgb !== null && !!entry.query && !this.plugin.hasName(entry.query);
+			const label = row.createSpan({ cls: "gcl-label", text: this.plugin.displayName(entry.query) });
+			if (unnamed) label.addClass("is-unnamed");
+			const tip = entry.query ? `${entry.query}\n${unnamed ? str.noNameHint + "\n" : ""}${str.menuHint}` : str.menuHint;
+			setTooltip(row, tip, {
 				placement: s.position.endsWith("right") ? "left" : "right",
 			});
 			if (info) {
@@ -1098,7 +1113,7 @@ export class Legend {
 			});
 			menu.addSeparator();
 		}
-		const page = this.plugin.legendNotes.get(query);
+		const page = this.plugin.legendNote(query)?.file;
 		if (page) {
 			menu.addItem((item) =>
 				item
@@ -1119,7 +1134,7 @@ export class Legend {
 		menu.addSeparator();
 		menu.addItem((item) =>
 			item
-				.setTitle(str.menuRenameLegend)
+				.setTitle(entry.rgb !== null && !this.plugin.hasName(query) ? str.menuGiveName : str.menuRenameLegend)
 				.setIcon("pencil")
 				.onClick(() => new EntryModal(this.plugin, query, "legend", null, this).open()),
 		);

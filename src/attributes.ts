@@ -4,7 +4,8 @@
  */
 import { App, getAllTags, TFile } from "obsidian";
 import type { GraphRenderer } from "./graph-internals";
-import type { NoteInfo } from "./query-match";
+import { entriesFromFrontmatter } from "./note-names";
+import { queryKey, type NoteInfo } from "./query-match";
 
 export interface AttributeEntry {
 	/** Same form as a graph search query: `tag:#name` or `[key:value]`. */
@@ -21,7 +22,7 @@ export interface Attributes {
 }
 
 /** Properties that describe the note itself rather than group it. */
-const SKIP_KEYS = new Set(["tags", "tag", "aliases", "alias", "cssclasses", "cssclass", "position", "graph-legend"]);
+const SKIP_KEYS = new Set(["tags", "tag", "aliases", "alias", "cssclasses", "cssclass", "position", "graph-legend", "graph-legend-name"]);
 /** A property is listed only if it splits notes into a few groups. */
 const MAX_VALUES = 12;
 const MAX_VALUE_LENGTH = 40;
@@ -109,14 +110,22 @@ export function collectAttributes(app: App, notes: NoteInfo[]): Attributes {
 	return { tags, properties, signature };
 }
 
-/** Notes that name a legend entry: front matter `graph-legend: <query>` (a string or a list). */
-export function collectLegendNotes(app: App): Map<string, TFile> {
-	const out = new Map<string, TFile>();
+/** A note that describes a legend entry (front matter `graph-legend`), with its own short name if it has one. */
+export interface LegendNote {
+	file: TFile;
+	/** The query exactly as written in the note. */
+	query: string;
+	/** From `graph-legend-name`; null means the note's title is used. */
+	name: string | null;
+}
+
+/** Notes that describe legend entries, by `queryKey` of their query. The first note wins. */
+export function collectLegendNotes(app: App): Map<string, LegendNote> {
+	const out = new Map<string, LegendNote>();
 	for (const file of app.vault.getMarkdownFiles()) {
-		const v: unknown = app.metadataCache.getFileCache(file)?.frontmatter?.["graph-legend"];
-		const list = typeof v === "string" ? [v] : Array.isArray(v) ? v : [];
-		for (const q of list) {
-			if (typeof q === "string" && q.trim() && !out.has(q.trim())) out.set(q.trim(), file);
+		for (const e of entriesFromFrontmatter(app.metadataCache.getFileCache(file)?.frontmatter)) {
+			const key = queryKey(e.query);
+			if (!out.has(key)) out.set(key, { file, query: e.query, name: e.name });
 		}
 	}
 	return out;

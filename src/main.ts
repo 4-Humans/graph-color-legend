@@ -19,7 +19,11 @@ import { t } from "./i18n";
 import { labelFromQuery } from "./labels";
 import { replaceTagInQuery } from "./tags";
 import { ContentView, Legend, LegendSize, rgbToHex, SIZE_LIMITS } from "./legend";
-import { collectLegendNotes } from "./attributes";
+import { collectLegendNotes, LegendNote } from "./attributes";
+import { entriesFromFrontmatter, rewriteQueriesInFrontmatter, setNameInFrontmatter } from "./note-names";
+import { queryKey } from "./query-match";
+import { addPending, diffGroups, groupsKey, RemovedGroup, withKept } from "./group-sync";
+import { RemovedGroupsModal } from "./removed-modal";
 
 export type Position = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "free";
 export type LegendStyle = "list" | "compact";
@@ -60,6 +64,10 @@ export interface GraphColorLegendSettings {
 	presets: Preset[];
 	/** Automatic copy of the global graph's color groups, offered back when they all disappear. */
 	groupsBackup: ColorGroup[];
+	/** The global graph's color groups as the plugin last saw them agreed on; null before the first look. */
+	knownGroups: ColorGroup[] | null;
+	/** Groups removed from graph.json outside Obsidian, kept on the graph until the person decides. */
+	pendingRemoved: RemovedGroup[];
 	/** Own order of tags and properties in the legend (queries); entries not listed follow in the usual order. */
 	order: { tags: string[]; properties: string[] };
 	/** List: roomy rows. Compact: tight rows, for many groups or small screens. */
@@ -101,6 +109,8 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	neighbors: false,
 	presets: [],
 	groupsBackup: [],
+	knownGroups: null,
+	pendingRemoved: [],
 	order: { tags: [], properties: [] },
 	style: "list",
 	offset: { graph: null, local: null },
@@ -161,6 +171,18 @@ function sanitizeGroupList(v: unknown): ColorGroup[] {
 	return groups;
 }
 
+function sanitizeRemoved(v: unknown): RemovedGroup[] {
+	const out: RemovedGroup[] = [];
+	for (const r of Array.isArray(v) ? v.slice(0, MAX_PRESET_GROUPS) : []) {
+		if (typeof r !== "object" || r === null) continue;
+		const x = r as Record<string, unknown>;
+		const group = sanitizeGroupList([x.group])[0];
+		const index = typeof x.index === "number" && Number.isFinite(x.index) ? Math.max(0, Math.round(x.index)) : 0;
+		if (group && !out.some((o) => o.group.query === group.query)) out.push({ group, index });
+	}
+	return out;
+}
+
 function sanitizePresets(v: unknown): Preset[] {
 	if (!Array.isArray(v)) return [];
 	const out: Preset[] = [];
@@ -216,6 +238,8 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		neighbors: typeof d.neighbors === "boolean" ? d.neighbors : DEFAULT_SETTINGS.neighbors,
 		presets: sanitizePresets(d.presets),
 		groupsBackup: sanitizeGroupList(d.groupsBackup),
+		knownGroups: Array.isArray(d.knownGroups) ? sanitizeGroupList(d.knownGroups) : null,
+		pendingRemoved: sanitizeRemoved(d.pendingRemoved),
 		order: (() => {
 			const o = (typeof d.order === "object" && d.order !== null ? d.order : {}) as Record<string, unknown>;
 			return { tags: stringList(o.tags).slice(0, 5000), properties: stringList(o.properties).slice(0, 5000) };
@@ -231,6 +255,10 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 const GRAPH = "graph";
 const LOCAL_GRAPH = "localgraph";
 const TICK_MS = 700;
+/** How often graph.json is looked at for changes made outside Obsidian. */
+const FILE_CHECK_MS = 2000;
+/** How long a state the graph showed counts as "just shown": Obsidian saves its own changes within a second or two. */
+const RECENT_MS = 6000;
 
 export default class GraphColorLegendPlugin extends Plugin {
 	settings: GraphColorLegendSettings = sanitizeSettings(null);
@@ -239,7 +267,7 @@ export default class GraphColorLegendPlugin extends Plugin {
 	fileGroups: ColorGroup[] | null = null;
 	private legends = new Map<ContentView, Legend>();
 	/** Notes that give a legend entry its name (front matter `graph-legend`). */
-	legendNotes = new Map<string, TFile>();
+	legendNotes = new Map<string, LegendNote>();
 	private legendNotesTimer = 0;
 	/** Undo and redo for the legend's changes; kept until Obsidian restarts. */
 	history = new History(() => {
@@ -253,14 +281,17 @@ export default class GraphColorLegendPlugin extends Plugin {
 
 		this.app.workspace.onLayoutReady(async () => {
 			this.legendNotes = collectLegendNotes(this.app);
+			void this.moveNamesToNotes();
 			this.registerEvent(this.app.metadataCache.on("changed", () => this.queueLegendNotes()));
 			this.registerEvent(this.app.vault.on("rename", () => this.queueLegendNotes()));
 			this.registerEvent(this.app.vault.on("delete", () => this.queueLegendNotes()));
 			await this.loadFileGroups();
+			await this.startupGroupsCheck();
 			this.scan();
 			this.registerEvent(this.app.workspace.on("layout-change", () => this.scan()));
 			this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scan()));
 			this.registerInterval(window.setInterval(() => this.tick(), TICK_MS));
+			this.registerInterval(window.setInterval(() => void this.checkGraphFile(), FILE_CHECK_MS));
 		});
 	}
 
@@ -273,23 +304,144 @@ export default class GraphColorLegendPlugin extends Plugin {
 		this.highlighter.destroy();
 	}
 
-	/** Own name from the plugin, then the note marked with `graph-legend`, then a name made from the query. */
+	/** The note that describes this entry (front matter `graph-legend`), matched by meaning, not character by character. */
+	legendNote(query: string): LegendNote | undefined {
+		return this.legendNotes.get(queryKey(query));
+	}
+
+	/**
+	 * Name in the note (`graph-legend-name`), then the name kept by the plugin, then the note's title,
+	 * then a name made from the query.
+	 */
 	displayName(query: string): string {
-		return this.settings.names[query] || this.legendNotes.get(query)?.basename || labelFromQuery(query) || "—";
+		const note = this.legendNote(query);
+		return note?.name || this.settings.names[query] || note?.file.basename || labelFromQuery(query) || "—";
+	}
+
+	/** True when someone gave the entry a name: in the legend, in a note, or by describing it in a note. */
+	hasName(query: string): boolean {
+		return !!(this.settings.names[query] || this.legendNote(query));
+	}
+
+	/** The name as the user gave it (for the rename box), without the fallbacks. */
+	ownName(query: string): string {
+		return this.legendNote(query)?.name || this.settings.names[query] || "";
+	}
+
+	/** Writes the name into the note that describes the entry; false if that did not work. */
+	private async writeNoteName(note: LegendNote, query: string, name: string | null): Promise<boolean> {
+		let ok = false;
+		try {
+			await this.app.fileManager.processFrontMatter(note.file, (fm: Record<string, unknown>) => {
+				ok = setNameInFrontmatter(fm, query, name);
+			});
+		} catch {
+			ok = false;
+		}
+		return ok;
+	}
+
+	/**
+	 * Gives an entry a name. When a note describes the entry, the name goes into that note
+	 * (`graph-legend-name`), so people and AI agents see the same name; otherwise the plugin keeps it.
+	 * Empty value: back to the note's title or the name made from the query. Can be undone.
+	 */
+	async setEntryName(query: string, value: string, legend: Legend | null = null): Promise<void> {
+		const str = t();
+		const v = value.trim();
+		const note = this.legendNote(query);
+		if (!note) {
+			await this.recordSettings(str.stepRename(this.displayName(query)), () => {
+				if (v) this.settings.names[query] = v;
+				else delete this.settings.names[query];
+			});
+			return;
+		}
+		const before = note.name;
+		const plugin = this.settings.names[query];
+		if ((before ?? "") === v && plugin === undefined) return;
+		const label = str.stepRename(this.displayName(query));
+		const apply = async (name: string | null, pluginName: string | undefined): Promise<StepResult | void> => {
+			if (!(await this.writeNoteName(note, query, name))) return { skipped: [note.file.path] };
+			if (pluginName === undefined) delete this.settings.names[query];
+			else this.settings.names[query] = pluginName;
+			this.optimisticName(query, name);
+			await this.saveSettingsAndRefresh();
+		};
+		const first = await apply(v || null, undefined);
+		if (first?.skipped) {
+			new Notice(str.nameNoteFailed(note.file.path), 8000);
+			return;
+		}
+		this.history.push({
+			label,
+			undo: () => apply(before, plugin),
+			redo: () => apply(v || null, undefined),
+		});
+		legend?.flash(str.nameInNote(note.file.basename), true);
+	}
+
+	/**
+	 * A note that named an entry was deleted, or its `graph-legend` removed: the name stays with the
+	 * plugin, so it does not disappear from the legend. Only for entries the legend still shows.
+	 */
+	private keepNamesOfLostNotes(before: Map<string, LegendNote>, after: Map<string, LegendNote>): boolean {
+		let changed = false;
+		for (const [key, note] of before) {
+			if (!note.name || after.has(key)) continue;
+			const query = this.settings.knownQueries.find((q) => queryKey(q) === key);
+			if (query === undefined) continue;
+			this.settings.names[query] = note.name;
+			changed = true;
+		}
+		return changed;
+	}
+
+	/** Shows a name written to a note at once, before Obsidian re-reads the note. */
+	private optimisticName(query: string, name: string | null): void {
+		const note = this.legendNote(query);
+		if (note) note.name = name;
+	}
+
+	/**
+	 * Names that the plugin keeps for entries that now have a describing note move into that note,
+	 * unless the note already has its own name. Runs when notes change.
+	 */
+	private async moveNamesToNotes(): Promise<void> {
+		const moved: string[] = [];
+		let changed = false;
+		for (const [query, name] of Object.entries(this.settings.names)) {
+			const note = this.legendNote(query);
+			if (!note) continue;
+			// The note already names the entry: the note's name is shown, the plugin's stays as a spare.
+			if (note.name) continue;
+			if (await this.writeNoteName(note, query, name)) {
+				this.optimisticName(query, name);
+				delete this.settings.names[query];
+				moved.push(note.file.basename);
+				changed = true;
+			}
+		}
+		if (!changed) return;
+		await this.saveSettingsAndRefresh();
+		if (moved.length) new Notice(t().namesMoved(moved), 8000);
 	}
 
 	private queueLegendNotes(): void {
 		window.clearTimeout(this.legendNotesTimer);
 		this.legendNotesTimer = window.setTimeout(() => {
 			const next = collectLegendNotes(this.app);
-			const same =
-				next.size === this.legendNotes.size &&
-				[...next].every(([q, f]) => this.legendNotes.get(q) === f && f.basename === this.legendNotes.get(q)?.basename);
+			const sig = (m: Map<string, LegendNote>) =>
+				JSON.stringify([...m].map(([k, n]) => [k, n.file.path, n.file.basename, n.name]));
+			const same = sig(next) === sig(this.legendNotes);
+			const keptBack = same ? false : this.keepNamesOfLostNotes(this.legendNotes, next);
 			this.legendNotes = next;
+			if (keptBack) void this.saveData(this.settings);
 			for (const legend of this.legends.values()) {
 				legend.notesChanged();
 				if (!same) legend.update(true);
 			}
+			if (!same) void this.moveNamesToNotes();
 		}, 500);
 	}
 
@@ -588,8 +740,25 @@ export default class GraphColorLegendPlugin extends Plugin {
 		if (undoable) for (const u of usage) before.set(u.file.path, await this.app.vault.read(u.file));
 		const groupsBefore = this.snapshotGroups();
 		const stateBefore = this.legendState();
+		// Notes that describe an entry with this tag (`graph-legend`) follow the rename, or the entry would lose its name.
+		const rewrite = (q: string) => replaceTagInQuery(q, old, next);
+		const legendFiles = this.app.vault
+			.getMarkdownFiles()
+			.filter((f) =>
+				entriesFromFrontmatter(this.app.metadataCache.getFileCache(f)?.frontmatter).some((e) => rewrite(e.query) !== e.query),
+			);
+		if (undoable) for (const f of legendFiles) if (!before.has(f.path)) before.set(f.path, await this.app.vault.read(f));
 
 		const result = await renameTagInNotes(this.app, usage, old, next, onProgress);
+		for (const f of legendFiles) {
+			try {
+				await this.app.fileManager.processFrontMatter(f, (fm: Record<string, unknown>) => {
+					rewriteQueriesInFrontmatter(fm, rewrite);
+				});
+			} catch (e) {
+				result.failed.push({ path: f.path, reason: e instanceof Error ? e.message : String(e) });
+			}
+		}
 		const graphUpdated = await this.renameTagInGraphGroups(old, next);
 		if (!undoable) return { result, graphUpdated, undoable };
 
@@ -826,9 +995,287 @@ export default class GraphColorLegendPlugin extends Plugin {
 	}
 
 	private tick(): void {
+		this.noteMemory();
 		for (const legend of this.legends.values()) {
 			if (legend.view.containerEl.isShown()) legend.update();
 		}
+		this.maybeReviewRemoved();
+	}
+
+	// ---- Changes to graph.json made outside Obsidian (an AI agent, sync, a text editor) ----
+
+	private graphFileStamp = "";
+	private checkingFile = false;
+	private reviewOpen = false;
+	/** The review window opens by itself once per Obsidian run (and again when more groups go). */
+	private reviewShown = false;
+	private recentMemory: { key: string; time: number }[] = [];
+	private startupChecked = false;
+
+	private graphPath(): string {
+		return normalizePath(`${this.app.vault.configDir}/graph.json`);
+	}
+
+	/** The global graph's groups that Obsidian holds in memory (what the graph shows), or null if out of reach. */
+	private memoryGroups(): ColorGroup[] | null {
+		const inst = getGraphPluginInstance(this.app);
+		return inst?.options ? (normalizeGroups(inst.options.colorGroups) ?? []) : null;
+	}
+
+	/**
+	 * The groups the open global graph shows, or null when no graph is open. Obsidian rereads graph.json into its
+	 * settings when the file changes, but an open graph keeps showing the old groups: this is what the person sees.
+	 */
+	private shownGroups(): ColorGroup[] | null {
+		for (const leaf of this.app.workspace.getLeavesOfType(GRAPH)) {
+			if (leaf.isDeferred) continue;
+			const groups = readLiveGroups(leaf.view);
+			if (groups) return groups;
+		}
+		return null;
+	}
+
+	/** Puts groups into Obsidian's memory and the open graphs without writing graph.json, so nothing else in the file is overwritten. */
+	private setMemoryGroups(groups: ColorGroup[]): boolean {
+		const inst = getGraphPluginInstance(this.app);
+		if (!inst?.options) return false;
+		inst.options.colorGroups = mergeRawGroups(inst.options.colorGroups, groups);
+		for (const leaf of this.app.workspace.getLeavesOfType(GRAPH)) {
+			if (!leaf.isDeferred) setLiveGroups(leaf.view, groups);
+		}
+		return true;
+	}
+
+	/** Writes the color groups into graph.json and leaves the rest of the file (filters, forces) as it is. */
+	private async writeFileGroups(groups: ColorGroup[]): Promise<void> {
+		const path = this.graphPath();
+		const json = (await this.app.vault.adapter.exists(path))
+			? (JSON.parse(await this.app.vault.adapter.read(path)) as Record<string, unknown>)
+			: {};
+		if (groupsKey(normalizeGroups(json.colorGroups) ?? []) === groupsKey(groups)) return;
+		const raw = getGraphPluginInstance(this.app)?.options?.colorGroups ?? json.colorGroups;
+		json.colorGroups = mergeRawGroups(raw, groups);
+		await this.app.vault.adapter.write(path, JSON.stringify(json, null, 2));
+	}
+
+	/** Remembers what the graph showed lately, to tell Obsidian's own (late) saves from changes made outside. */
+	private noteMemory(): void {
+		// Only the open graph counts: Obsidian's settings memory also changes when the file is changed outside.
+		const m = this.shownGroups();
+		if (!m) return;
+		const key = groupsKey(m);
+		const now = Date.now();
+		const last = this.recentMemory[this.recentMemory.length - 1];
+		if (last && last.key === key) {
+			last.time = now;
+			return;
+		}
+		this.recentMemory = this.recentMemory.filter((x) => now - x.time < RECENT_MS).slice(-50);
+		this.recentMemory.push({ key, time: now });
+		if (!this.startupChecked) return;
+		// A change made in Obsidian itself: it is what the plugin knows now, and a waiting group the person
+		// deleted by hand needs no decision any more.
+		const s = this.settings;
+		const before = s.pendingRemoved.length;
+		s.pendingRemoved = s.pendingRemoved.filter((r) => m.some((g) => g.query === r.group.query));
+		if (before !== s.pendingRemoved.length || !s.knownGroups || groupsKey(s.knownGroups) !== key) {
+			s.knownGroups = m.map((g) => ({ ...g }));
+			void this.saveSettingsQuiet();
+			if (before !== s.pendingRemoved.length) this.refreshLegends();
+		}
+	}
+
+	private shownRecently(key: string): boolean {
+		const now = Date.now();
+		return this.recentMemory.some((x) => x.key === key && now - x.time < RECENT_MS);
+	}
+
+	private refreshLegends(): void {
+		for (const legend of this.legends.values()) legend.update(true);
+	}
+
+	private async setKnown(groups: ColorGroup[]): Promise<void> {
+		const s = this.settings;
+		if (s.knownGroups && groupsKey(s.knownGroups) === groupsKey(groups)) return;
+		s.knownGroups = groups.map((g) => ({ ...g }));
+		await this.saveSettingsQuiet();
+	}
+
+	/** Groups removed while Obsidian was closed: found by comparing with the set the plugin saw last time. */
+	private async startupGroupsCheck(): Promise<void> {
+		try {
+			const stat = await this.app.vault.adapter.stat(this.graphPath());
+			this.graphFileStamp = stat ? `${stat.mtime}:${stat.size}` : "";
+		} catch {
+			this.graphFileStamp = "";
+		}
+		const memory = this.memoryGroups();
+		if (memory === null) return;
+		this.startupChecked = true;
+		const s = this.settings;
+		if (s.knownGroups === null) {
+			// First run with this version: nothing to compare with yet.
+			await this.setKnown(memory);
+			this.noteMemory();
+			return;
+		}
+		s.pendingRemoved = s.pendingRemoved.filter((r) => !memory.some((g) => g.query === r.group.query));
+		s.pendingRemoved = addPending(s.pendingRemoved, diffGroups(s.knownGroups, memory).removed);
+		const next = s.pendingRemoved.length ? withKept(memory, s.pendingRemoved) : memory;
+		if (groupsKey(next) !== groupsKey(memory)) this.setMemoryGroups(next);
+		this.noteMemory();
+		s.knownGroups = next.map((g) => ({ ...g }));
+		await this.saveSettingsQuiet();
+		if (s.pendingRemoved.length) this.reviewShown = false;
+	}
+
+	/** Looks at graph.json every few seconds; a change made outside Obsidian reaches the graph at once. */
+	private async checkGraphFile(): Promise<void> {
+		if (this.checkingFile) return;
+		this.checkingFile = true;
+		try {
+			const path = this.graphPath();
+			const stat = await this.app.vault.adapter.stat(path);
+			if (!stat) return;
+			const stamp = `${stat.mtime}:${stat.size}`;
+			if (stamp === this.graphFileStamp) return;
+			let groups: ColorGroup[];
+			try {
+				const json = JSON.parse(await this.app.vault.adapter.read(path)) as { colorGroups?: unknown };
+				groups = normalizeGroups(json.colorGroups) ?? [];
+			} catch {
+				// Half-written or broken: look again next time.
+				return;
+			}
+			this.graphFileStamp = stamp;
+			this.fileGroups = groups;
+			if (this.memoryGroups() === null) {
+				this.refreshLegends();
+				return;
+			}
+			const key = groupsKey(groups);
+			const shown = this.shownGroups();
+			if (shown && key === groupsKey(shown)) {
+				// Obsidian (or this plugin) saved what the graph shows.
+				await this.setKnown(shown);
+				return;
+			}
+			// A late save of something the graph showed a moment ago is Obsidian's own, not a change from outside.
+			if (shown && this.shownRecently(key)) return;
+			const known = this.settings.knownGroups;
+			if (!known) {
+				await this.setKnown(groups);
+				return;
+			}
+			if (key === groupsKey(known) && !shown) return;
+			await this.applyOutsideGroups(known, groups, shown);
+		} catch {
+			// The next look tries again.
+		} finally {
+			this.checkingFile = false;
+		}
+	}
+
+	/** New, changed and reordered groups go to the graph at once; removed ones stay until the person decides. */
+	private async applyOutsideGroups(known: ColorGroup[], file: ColorGroup[], shown: ColorGroup[] | null): Promise<void> {
+		const s = this.settings;
+		const str = t();
+		const diff = diffGroups(known, file);
+		s.pendingRemoved = s.pendingRemoved.filter((r) => !file.some((g) => g.query === r.group.query));
+		s.pendingRemoved = addPending(s.pendingRemoved, diff.removed);
+		const next = withKept(file, s.pendingRemoved);
+		const before = shown ?? known;
+		// Obsidian's memory may already hold the file's groups (it rereads the file), so it is always set.
+		this.setMemoryGroups(next);
+		this.noteMemory();
+		const visible = groupsKey(next) !== groupsKey(before);
+		if (visible) {
+			const prev = before.map((g) => ({ ...g }));
+			this.history.push({
+				label: str.stepGroupsFromFile,
+				undo: async () => {
+					await this.replaceGroups(null, false, prev);
+				},
+				redo: async () => {
+					await this.replaceGroups(null, false, next);
+				},
+			});
+		}
+		s.knownGroups = next.map((g) => ({ ...g }));
+		await this.saveSettingsQuiet();
+		this.refreshLegends();
+		if (visible && (diff.added > 0 || diff.changed > 0 || diff.removed.length === 0)) {
+			for (const legend of this.legends.values()) if (!legend.isLocal) legend.flash(str.groupsFromFile, true);
+		}
+		if (diff.removed.length > 0) this.reviewShown = false;
+	}
+
+	/** Opens the review of removed groups when a graph is on screen and nobody is typing; otherwise it waits. */
+	private maybeReviewRemoved(): void {
+		if (this.reviewOpen || this.reviewShown || this.settings.pendingRemoved.length === 0) return;
+		const graphShown = this.app.workspace
+			.getLeavesOfType(GRAPH)
+			.some((leaf) => !leaf.isDeferred && leaf.view.containerEl.isShown());
+		if (!graphShown) return;
+		const el = activeDocument.activeElement;
+		if (el?.instanceOf(HTMLElement) && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+		this.openRemovedReview();
+	}
+
+	/** The window with the removed groups; also opened from the bar in the legend. */
+	openRemovedReview(): void {
+		if (this.reviewOpen || this.settings.pendingRemoved.length === 0) return;
+		this.reviewOpen = true;
+		this.reviewShown = true;
+		new RemovedGroupsModal(this, [...this.settings.pendingRemoved], () => {
+			this.reviewOpen = false;
+		}).open();
+	}
+
+	/** The person's answer: groups in `keep` stay (and go back into graph.json), the others are removed. */
+	async decideRemoved(shown: string[], keep: Set<string>): Promise<void> {
+		const s = this.settings;
+		const str = t();
+		// Take in whatever changed in the file meanwhile, so writing it below loses nothing.
+		await this.checkGraphFile();
+		const decided = new Set(shown);
+		const pending = s.pendingRemoved.filter((r) => decided.has(r.group.query));
+		if (pending.length === 0) return;
+		const memory = this.shownGroups() ?? this.memoryGroups() ?? [];
+		const drop = new Set(pending.filter((r) => !keep.has(r.group.query)).map((r) => r.group.query));
+		const kept = pending.length - drop.size;
+		const next = memory.filter((g) => !drop.has(g.query));
+		// Groups that went missing after the window opened were not shown, so they still wait.
+		s.pendingRemoved = s.pendingRemoved.filter((r) => !decided.has(r.group.query));
+		if (s.pendingRemoved.length) this.reviewShown = false;
+		this.setMemoryGroups(next);
+		// The file gets exactly what the graph shows: kept groups go back, so the agent sees them too, and
+		// removed ones stay out even if Obsidian saved them back in the meantime.
+		try {
+			await this.writeFileGroups(next);
+		} catch {
+			new Notice(str.groupsFailed, 8000);
+		}
+		this.noteMemory();
+		s.knownGroups = next.map((g) => ({ ...g }));
+		await this.saveSettingsQuiet();
+		const prev = memory.map((g) => ({ ...g }));
+		if (drop.size > 0) {
+			this.history.push({
+				label: str.stepRemovedGroups,
+				undo: async () => {
+					await this.replaceGroups(null, false, prev);
+				},
+				redo: async () => {
+					await this.replaceGroups(null, false, next);
+				},
+			});
+		}
+		this.refreshLegends();
+		const message = str.removedDone(kept, drop.size);
+		const legend = [...this.legends.values()].find((l) => !l.isLocal);
+		if (legend) legend.flash(message, drop.size > 0);
+		else new Notice(message, 5000);
 	}
 
 	/** Attach legends to graph views and drop the ones whose view is gone. */
@@ -1041,23 +1488,28 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			sw.setCssProps({ "--gcl-color": rgbToHex(rgb) });
 			setting.nameEl.prepend(sw);
 		}
+		const note = this.plugin.legendNote(q);
+		if (note) setting.setDesc(str.nameInNoteSetting(note.file.basename));
 		setting
-			.addText((tx) =>
-				tx
-					.setPlaceholder(labelFromQuery(q))
-					.setValue(s.names[q] ?? "")
-					.onChange(async (v) => {
-						const value = v.trim();
-						await this.plugin.recordSettings(
-							str.stepRename(this.plugin.displayName(q)),
-							() => {
-								if (value) s.names[q] = value;
-								else delete s.names[q];
-							},
-							{ mergeKey: "name:" + q },
-						);
-					}),
-			)
+			.addText((tx) => {
+				tx.setPlaceholder(note ? note.file.basename : labelFromQuery(q)).setValue(this.plugin.ownName(q));
+				if (note) {
+					// The name lives in a note: write it once, when the field is left, not on every key.
+					tx.inputEl.addEventListener("change", () => void this.plugin.setEntryName(q, tx.getValue()));
+					return;
+				}
+				tx.onChange(async (v) => {
+					const value = v.trim();
+					await this.plugin.recordSettings(
+						str.stepRename(this.plugin.displayName(q)),
+						() => {
+							if (value) s.names[q] = value;
+							else delete s.names[q];
+						},
+						{ mergeKey: "name:" + q },
+					);
+				});
+			})
 			.addExtraButton((b) => {
 				const paint = () => {
 					const hidden = s.hidden.includes(q);

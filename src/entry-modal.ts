@@ -34,7 +34,6 @@ export class EntryModal extends Modal {
 
 	onOpen(): void {
 		const str = t();
-		const s = this.plugin.settings;
 		const { contentEl } = this;
 		this.setTitle(this.mode === "legend" ? str.menuRenameLegend : str.menuRenameEverywhere);
 		contentEl.addClass("gcl-modal");
@@ -45,12 +44,14 @@ export class EntryModal extends Modal {
 			return;
 		}
 
-		// Name shown only in the legend.
-		contentEl.createEl("p", { cls: "gcl-modal-desc", text: str.renameDesc });
-		let name = s.names[this.query] ?? "";
+		// The name goes into the note that describes the entry, if there is one; otherwise the plugin keeps it.
+		const note = this.plugin.legendNote(this.query);
+		contentEl.createEl("p", { cls: "gcl-modal-desc", text: note ? str.renameInNoteDesc(note.file.basename) : str.renameDesc });
+		if (!note) contentEl.createEl("p", { cls: "gcl-modal-desc", text: str.renameNoteTip });
+		let name = this.plugin.ownName(this.query);
 		new Setting(contentEl)
 			.addText((text) => {
-				text.setPlaceholder(labelFromQuery(this.query)).setValue(name);
+				text.setPlaceholder(note ? note.file.basename : labelFromQuery(this.query)).setValue(name);
 				text.onChange((v) => (name = v));
 				text.inputEl.addClass("gcl-rename-input");
 				text.inputEl.addEventListener("keydown", (e) => {
@@ -142,13 +143,8 @@ export class EntryModal extends Modal {
 	}
 
 	private async saveName(value: string): Promise<void> {
-		const s = this.plugin.settings;
-		const v = value.trim();
 		this.close();
-		await this.plugin.recordSettings(t().stepRename(this.plugin.displayName(this.query)), () => {
-			if (v) s.names[this.query] = v;
-			else delete s.names[this.query];
-		});
+		await this.plugin.setEntryName(this.query, value, this.legend);
 	}
 
 	private clearPreview(): void {
