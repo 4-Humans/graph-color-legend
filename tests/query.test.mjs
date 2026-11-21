@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { matchNotes, parseQuery } from "./query.bundle.mjs";
+import { matchNotes, parseQuery, queryKey } from "./query.bundle.mjs";
 
 const notes = [
 	{ id: "a.md", path: "wiki/a.md", name: "a.md", tags: ["tools", "tools/voice"], frontmatter: { stage: "idea", tags: ["tools"] } },
@@ -25,6 +25,15 @@ assert.equal(ids("plain words"), null);
 assert.equal(ids(""), null);
 assert.equal(ids("[broken"), null);
 assert.equal(parseQuery("x".repeat(600)), null);
+// Same meaning, same key.
+assert.equal(queryKey("tag:#Work"), queryKey("#work"));
+assert.equal(queryKey("  tag:#a   tag:#b "), queryKey("tag:#b tag:#a"));
+assert.equal(queryKey("[Status: Done]"), queryKey("[status:done]"));
+assert.equal(queryKey('path:"Wiki/Topics"'), queryKey("path:wiki/topics"));
+assert.notEqual(queryKey("tag:#a"), queryKey("-tag:#a"));
+assert.notEqual(queryKey("tag:#a"), queryKey("tag:#ab"));
+assert.equal(queryKey("a  OR   B"), "a or b");
+assert.equal(queryKey(""), "");
 // Linear on crafted input.
 const t0 = performance.now();
 for (let i = 0; i < 200; i++) parseQuery("[".repeat(250) + '"'.repeat(249));
