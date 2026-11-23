@@ -1,6 +1,6 @@
 # Graph Color Legend
 
-See at a glance what each color in your Obsidian graph means.
+Your graph is a map of your notes. This is its legend and control panel.
 
 ![The legend in the corner of the graph](screenshots/screenshot-legend.png)
 
@@ -8,6 +8,7 @@ See at a glance what each color in your Obsidian graph means.
 
 - Lists the graph's color groups in a small legend, with how many nodes each one colors. Works in the global and the local graph, on desktop and mobile.
 - Point at an entry to highlight its notes. Click to keep it highlighted, or show only the highlighted nodes.
+- Find any word from your notes on the graph: type it in the legend's search, see the matching notes light up, and open a note at the found place.
 - Shows the tags and properties of the notes in the graph. Turn any of them into a color group in one step.
 - Drag entries to reorder groups. A warning appears when a group above takes a group's notes.
 - Rename an entry only in the legend, or rename a tag in all notes after a preview of every note that will change.
@@ -66,7 +67,9 @@ Everything runs inside Obsidian on your device. The plugin makes no network requ
 
 It reads `.obsidian/graph.json` every two seconds to show changes made outside Obsidian, and writes to it only the color groups: when you reorder or edit groups, restore them, or keep groups that were removed outside Obsidian. Filters, forces and other graph settings in the file are left as they are.
 
-It reads the list of notes only for two features: renaming a tag in all notes, and taking entry names from notes with the `graph-legend` property. It writes to notes only for these too: a tag rename after you confirm it, and the `graph-legend-name` of a note that describes a group you renamed. Changes can be undone with the arrow in the legend.
+While the search box is open, it reads the text of your notes to find what you type. The text stays in memory on your device and is dropped when you close the search.
+
+Apart from the search, it reads the list of notes only for two features: renaming a tag in all notes, and taking entry names from notes with the `graph-legend` property. It writes to notes only for these too: a tag rename after you confirm it, and the `graph-legend-name` of a note that describes a group you renamed. Changes can be undone with the arrow in the legend.
 
 Details: everything read from files is shown as plain text, settings are checked when loaded, and query parsing is length-capped, so a crafted `graph.json` or `data.json` in a shared vault cannot run code or freeze the app. The bundle imports nothing but the `obsidian` module.
 
@@ -92,7 +95,7 @@ Details: everything read from files is shown as plain text, settings are checked
 - **Tag or property → color group.** The menu of a tag or a property has “Make a color group”: pick a color and whether the group goes first or last.
 - **Show notes.** The menu of any entry lists its notes in the graph, with a filter; click a note to open it, or open the same query in Obsidian's search.
 - **Sets of color groups.** In edit mode, the palette button saves the current groups (queries, colors, order) as a named set and applies saved sets, for example “by status” and “by topic”. Applying a set can be undone. Sets are renamed or deleted in the plugin settings. A local graph has its own groups, so there a set changes only that graph.
-- **Commands.** Undo and redo, show or hide the legend, search the legend, clear all highlights, show only highlighted nodes, highlight linked notes, apply a set, switch the compact style, copy or save the legend as a picture. No hotkeys are set by default; add your own in Settings → Hotkeys.
+- **Commands.** Undo and redo, show or hide the legend, search the legend and notes, clear all highlights, show only highlighted nodes, highlight linked notes, apply a set, switch the compact style, copy or save the legend as a picture. No hotkeys are set by default; add your own in Settings → Hotkeys.
 - **Desktop and mobile.** No Node.js or Electron APIs. Touch targets are larger on phones.
 - **Follows your theme.** Uses Obsidian's CSS variables.
 - **Your language.** The plugin's menus follow the Obsidian interface language: English, Chinese (Simplified and Traditional), French, German, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish, Turkish and Ukrainian. Other languages fall back to English. Names and tags can be written in any script, and emoji work in tags too. Translations other than English and Russian were made without a native speaker; corrections are welcome as issues or pull requests (files in `src/locales/`).
@@ -108,8 +111,10 @@ Details: everything read from files is shown as plain text, settings are checked
 - Highlight on hover: on or off.
 - Show in local graph: on or off. A local graph without its own color groups gets no legend.
 - Hide empty groups: on by default. A color group with no notes in this graph is left out of the legend, also when groups above take all its notes (a catch-all group kept last). Edit mode, with the warning, and search still show empty groups. Turn it off to see every color, for example in a local graph.
+- Show notes without a group: on by default. A last row for the nodes that no color group colors (grey on the graph).
 - Show tags, show properties: on or off.
 - Highlight linked notes: on or off.
+- Search in note text: on by default. The legend's search also looks in the text of your notes. Turn it off for a very large vault or a slow phone.
 - Show the legend: on or off (also a command).
 - Sets of color groups: rename or delete.
 - Entries: rename or hide each entry; reset all names kept by the plugin (names in notes stay).
