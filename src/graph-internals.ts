@@ -105,6 +105,9 @@ export function getRenderer(view: View): GraphRenderer | null {
 }
 
 /** Fill color of a node as an RGB integer, or null if it has no group color. */
+/** Legend key of the row for nodes that no color group colors (never a query of the graph). */
+export const UNGROUPED = "graph-legend:ungrouped";
+
 export function nodeRgb(node: GraphNode): number | null {
 	const c = node.color;
 	return isObject(c) && typeof c.rgb === "number" ? c.rgb : null;

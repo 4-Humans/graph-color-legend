@@ -1,14 +1,17 @@
-import { Menu, Notice, TFile, View, setIcon, setTooltip } from "obsidian";
+import { MarkdownView, Menu, Notice, Platform, TFile, View, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import { AttributeEntry, Attributes, collectAttributes, collectNotes } from "./attributes";
 import { EntryModal } from "./entry-modal";
-import { ColorGroup, getRenderer, nodeRgb, readLiveGroups } from "./graph-internals";
+import { ColorGroup, getRenderer, nodeRgb, openGlobalSearch, readLiveGroups, UNGROUPED } from "./graph-internals";
 import { freeColor, NewGroupModal, NotesModal, PathsModal, PresetNameModal } from "./modals";
 import { matchNotes, NoteInfo } from "./query-match";
 import { HighlightSpec } from "./highlight";
 import { t } from "./i18n";
 import type GraphColorLegendPlugin from "./main";
+import type { SearchScope } from "./main";
 import { extractTags } from "./tags";
 import { copyImage, legendImage, saveImage } from "./export-image";
+import type { SearchProgress, SearchResult } from "./note-search";
+import { looksLikeQuery, NoteHit, prepareQuery, Snippet } from "./text-search";
 
 /** A view with a content element (graph views are item views). */
 export type ContentView = View & { contentEl: HTMLElement };
@@ -40,6 +43,8 @@ interface Entry {
 	ids: string[];
 	/** Position in the graph's list of color groups (groups only). */
 	index?: number;
+	/** The row for nodes no group colors: its dot has their grey, it cannot be renamed, moved or made a group. */
+	ungrouped?: { rgb: number | null };
 }
 
 /** What the legend can tell about one color group from the graph as it is drawn now. */
@@ -73,6 +78,14 @@ const GAP_Y = 24;
 /** Touch: a press this long opens the entry menu instead of highlighting. */
 const LONG_PRESS_MS = 550;
 
+/** Text search: wait this long after the last keystroke. */
+const TEXT_DELAY_MS = 250;
+/** Notes listed at first, and added by "show more". */
+const TEXT_NOTES_STEP = 5;
+/** Lines with matches shown under a note at first, and after "…and N more". */
+const TEXT_SNIPPETS = 3;
+const TEXT_SNIPPETS_MORE = 50;
+
 const EMPTY_ATTRS: Attributes = { tags: [], properties: [], signature: "" };
 
 /** One legend panel attached to one graph view. */
@@ -94,6 +107,23 @@ export class Legend {
 	private searchInput: HTMLInputElement | null = null;
 	private focusSearch = false;
 	private bodyEl: HTMLElement | null = null;
+	/** Text search in the notes (the same box): the query being searched, and what it found. */
+	private textQuery = "";
+	private textResult: SearchResult | null = null;
+	private textBusy: SearchProgress | null = null;
+	/** Grows with every search, so an older one knows it is no longer wanted. */
+	private textRun = 0;
+	private textTimer = 0;
+	private textShown = TEXT_NOTES_STEP;
+	private textCollapsed = false;
+	/** Lines with matches of the listed notes, with the limit they were read with. */
+	private textSnippets = new Map<string, { limit: number; list: Snippet[] }>();
+	private textExpanded = new Set<string>();
+	/** The found note under the pointer (or chosen with the arrow keys): only it stays bright. */
+	private textHover: string | null = null;
+	private textCursor = -1;
+	/** The tab where found notes open, so the graph stays on screen. */
+	private resultLeaf: WorkspaceLeaf | null = null;
 	/** "Only highlighted": the other nodes are hidden, not faded. Not saved. */
 	private focusMode = false;
 	private notes: NoteInfo[] = [];
@@ -102,6 +132,9 @@ export class Legend {
 	private matchKey = "";
 	/** Number of nodes drawn in each group color. */
 	private colorCounts = new Map<number, number>();
+	/** Nodes no color group colors, and the grey the graph draws most of them in. */
+	private ungroupedIds: string[] = [];
+	private ungroupedRgb: number | null = null;
 	/** An entry is being dragged: the legend is not redrawn meanwhile. */
 	private drag = false;
 	private flashMsg: Flash | null = null;
@@ -141,6 +174,8 @@ export class Legend {
 
 	destroy(): void {
 		window.clearTimeout(this.flashTimer);
+		this.searchOpen = false;
+		this.resetText();
 		this.setHighlight(null);
 		this.el.remove();
 		this.view.contentEl.removeClass("gcl-has-legend");
@@ -153,6 +188,11 @@ export class Legend {
 	/** Called when notes change: tags and properties are read again on the next tick. */
 	notesChanged(): void {
 		this.attrNodes = -1;
+		// Notes were edited while a text search is shown: search again, keeping what is unfolded.
+		const q = this.textWanted();
+		if (q === "") return;
+		window.clearTimeout(this.textTimer);
+		this.textTimer = window.setTimeout(() => void this.runTextSearch(q, true), 600);
 	}
 
 	/** Tags and properties are read again only when the set of nodes or the notes change. */
@@ -169,13 +209,37 @@ export class Legend {
 		this.attrs = s.showTags || s.showProperties ? collectAttributes(this.plugin.app, this.notes) : EMPTY_ATTRS;
 	}
 
-	private countColors(): void {
+	private countColors(groups: ColorGroup[]): void {
 		const counts = new Map<number, number>();
-		for (const node of getRenderer(this.view)?.nodes ?? []) {
+		const nodes = getRenderer(this.view)?.nodes ?? [];
+		for (const node of nodes) {
 			const rgb = nodeRgb(node);
 			if (rgb !== null) counts.set(rgb, (counts.get(rgb) ?? 0) + 1);
 		}
 		this.colorCounts = counts;
+		// Nodes no color group colors: the graph draws them grey. Tag nodes are not notes and stay out.
+		const groupRgbs = new Set(groups.map((g) => g.rgb));
+		const ids: string[] = [];
+		const greys = new Map<number, number>();
+		for (const node of nodes) {
+			if (node.type === "tag") continue;
+			const rgb = nodeRgb(node);
+			if (rgb !== null && groupRgbs.has(rgb)) continue;
+			ids.push(node.id);
+			if (rgb !== null) greys.set(rgb, (greys.get(rgb) ?? 0) + 1);
+		}
+		// The dot gets the grey most of them have.
+		let grey: number | null = null;
+		let most = 0;
+		for (const [rgb, n] of greys) if (n > most) [grey, most] = [rgb, n];
+		this.ungroupedIds = ids;
+		this.ungroupedRgb = grey;
+	}
+
+	/** The last row of the color groups, for the grey nodes; null when there are none or the setting is off. */
+	private ungroupedEntry(): Entry | null {
+		if (!this.plugin.settings.showUngrouped || this.ungroupedIds.length === 0) return null;
+		return { query: UNGROUPED, rgb: null, ids: this.ungroupedIds, ungrouped: { rgb: this.ungroupedRgb } };
 	}
 
 	/** Count of a group and what may be wrong with it: covered by a group above, or sharing its color. */
@@ -242,7 +306,7 @@ export class Legend {
 		const live = readLiveGroups(this.view);
 		const groups = live ?? (this.isLocal ? [] : (this.plugin.fileGroups ?? []));
 		this.refreshAttributes(force, groups);
-		this.countColors();
+		this.countColors(groups);
 		this.watchGroups(groups);
 		const s = this.plugin.settings;
 		const sig = JSON.stringify([
@@ -266,6 +330,11 @@ export class Legend {
 			s.showTags,
 			s.showProperties,
 			s.hideEmpty,
+			s.showUngrouped,
+			this.ungroupedIds.length,
+			this.ungroupedRgb,
+			s.searchText,
+			s.searchScope,
 			this.groupsLost(),
 			this.isLocal ? 0 : this.plugin.settings.pendingRemoved.length,
 			s.collapsedSections,
@@ -312,7 +381,8 @@ export class Legend {
 	}
 
 	private allEntries(): Entry[] {
-		return [...this.groupEntries(), ...this.sectionEntries("tags"), ...this.sectionEntries("properties")];
+		const none = this.ungroupedEntry();
+		return [...this.groupEntries(), ...(none ? [none] : []), ...this.sectionEntries("tags"), ...this.sectionEntries("properties")];
 	}
 
 	private stateOf(query: string): EntryState {
@@ -339,6 +409,7 @@ export class Legend {
 		el.toggleClass("is-collapsed", s.collapsed);
 		el.toggleClass("is-editing", this.editing);
 		el.toggleClass("is-off", !s.showLegend);
+		el.toggleClass("is-text-search", !s.collapsed && this.textWanted() !== "");
 		const hasAny = this.groups.length > 0 || this.attrs.tags.length > 0 || this.attrs.properties.length > 0;
 		// A local graph without its own groups (and nothing else to list) gets no legend.
 		el.toggleClass("is-empty-local", this.isLocal && !hasAny);
@@ -375,7 +446,7 @@ export class Legend {
 		});
 
 		// The way out of "only highlighted" stays visible even when the legend is collapsed.
-		if (s.highlight && (this.focusMode || (!s.collapsed && this.selected.size > 0))) this.addFocusButton(header);
+		if (this.wantsFocusButton()) this.addFocusButton(header);
 
 		if (s.collapsed) return;
 
@@ -443,10 +514,14 @@ export class Legend {
 		const str = t();
 		this.hoverQuery = null;
 		body.empty();
+		const text = this.renderTextBlock(body);
 		const groups = this.groupEntries().filter((e) => this.matches(e));
 		this.renderRows(body, groups, "groups");
-		const shown = groups.length + this.renderSection(body, "tags", str.sectionTags) + this.renderSection(body, "properties", str.sectionProperties);
-		if (this.searching() && shown === 0) body.createDiv({ cls: "gcl-empty", text: str.noMatches });
+		const none = this.ungroupedEntry();
+		const ungrouped = none && this.matches(none) ? [none] : [];
+		this.renderRows(body, ungrouped, "ungrouped");
+		const shown = groups.length + ungrouped.length + this.renderSection(body, "tags", str.sectionTags) + this.renderSection(body, "properties", str.sectionProperties);
+		if (this.searching() && shown === 0 && !text) body.createDiv({ cls: "gcl-empty", text: str.noMatches });
 	}
 
 	private searching(): boolean {
@@ -466,7 +541,7 @@ export class Legend {
 		const field = box.createDiv({ cls: "gcl-search-field" });
 		const icon = field.createSpan({ cls: "gcl-search-icon" });
 		setIcon(icon, "search");
-		const input = field.createEl("input", { cls: "gcl-search-input", type: "text" });
+		const input = field.createEl("input", { cls: "gcl-search-input", type: "text", attr: { spellcheck: "false" } });
 		input.placeholder = str.search;
 		input.value = this.searchText;
 		this.searchInput = input;
@@ -480,6 +555,7 @@ export class Legend {
 			this.searchText = "";
 			input.value = "";
 			clear.addClass("is-hidden");
+			this.queueTextSearch();
 			this.renderBody();
 			input.focus();
 		});
@@ -493,6 +569,7 @@ export class Legend {
 		input.addEventListener("input", () => {
 			this.searchText = input.value;
 			clear.toggleClass("is-hidden", input.value === "");
+			this.queueTextSearch();
 			this.renderBody();
 		});
 		input.addEventListener("keydown", (e) => {
@@ -500,6 +577,14 @@ export class Legend {
 			if (e.key === "Escape") {
 				e.preventDefault();
 				this.closeSearch();
+			} else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				// Arrows walk through the found places, Enter opens the chosen one.
+				if (this.moveTextCursor(e.key === "ArrowDown" ? 1 : -1)) e.preventDefault();
+			} else if (e.key === "Enter") {
+				const chosen = this.textHits()[this.textCursor];
+				if (!chosen) return;
+				e.preventDefault();
+				chosen.click();
 			}
 		});
 		if (this.focusSearch) {
@@ -622,9 +707,17 @@ export class Legend {
 		});
 	}
 
+	/** "Only highlighted" is offered when something is highlighted: entries, or notes found by the text search. */
+	private wantsFocusButton(): boolean {
+		const s = this.plugin.settings;
+		return s.highlight && (this.focusMode || (!s.collapsed && (this.selected.size > 0 || this.textIds() !== null)));
+	}
+
 	private addFocusButton(header: HTMLElement): void {
 		const str = t();
 		const btn = header.createEl("button", { cls: "gcl-icon-button gcl-focus clickable-icon" });
+		// Right after the title, also when it is added later (text search results came in).
+		header.querySelector(".gcl-title")?.insertAdjacentElement("afterend", btn);
 		setIcon(btn, "focus");
 		btn.toggleClass("is-active", this.focusMode);
 		const tip = this.focusMode ? str.focusOff : str.focusOn;
@@ -637,7 +730,7 @@ export class Legend {
 	private renderFocusBar(): void {
 		const str = t();
 		const bar = this.el.createDiv({ cls: "gcl-focus-bar" });
-		bar.createSpan({ cls: "gcl-focus-text", text: this.selected.size > 0 ? str.focusActive : str.focusEmpty });
+		bar.createSpan({ cls: "gcl-focus-text", text: this.selected.size > 0 || this.textIds() !== null ? str.focusActive : str.focusEmpty });
 		const exit = bar.createEl("button", { cls: "gcl-focus-exit", text: str.focusExit });
 		exit.addEventListener("click", () => this.toggleFocus());
 	}
@@ -679,7 +772,367 @@ export class Legend {
 	private closeSearch(): void {
 		this.searchOpen = false;
 		this.searchText = "";
+		this.resetText();
 		this.update(true);
+	}
+
+	// ---- text search in the notes ------------------------------------------
+
+	/** What the text search should look for now, or "" (box closed, too short, turned off in the settings). */
+	private textWanted(): string {
+		return this.searchOpen && this.plugin.settings.searchText ? prepareQuery(this.searchText) : "";
+	}
+
+	/** True while this legend shows (or is about to show) text search results; their texts stay in memory. */
+	usesTextSearch(): boolean {
+		return this.textWanted() !== "";
+	}
+
+	/** Paths of the notes the text search found, or null when there is nothing to highlight. */
+	private textIds(): string[] | null {
+		if (this.textWanted() === "") return null;
+		const hits = this.scopedHits();
+		return hits.length > 0 ? hits.map((h) => h.path) : null;
+	}
+
+	/** The found notes in the chosen scope: only those drawn on this graph, or all of them. */
+	private scopedHits(result: SearchResult | null = this.textResult): NoteHit[] {
+		if (!result) return [];
+		if (this.plugin.settings.searchScope === "all") return result.hits;
+		const onGraph = new Set((getRenderer(this.view)?.nodes ?? []).map((n) => n.id));
+		return result.hits.filter((h) => onGraph.has(h.path));
+	}
+
+	/** The switch under the results: where to look. The choice is kept. */
+	private setTextScope(scope: SearchScope): void {
+		const s = this.plugin.settings;
+		if (s.searchScope === scope) return;
+		s.searchScope = scope;
+		this.textShown = TEXT_NOTES_STEP;
+		this.textExpanded.clear();
+		this.textHover = null;
+		this.textCursor = -1;
+		void this.plugin.saveSettingsQuiet();
+		this.syncFocusButton();
+		this.applyHighlight();
+		void this.loadSnippets();
+	}
+
+	private resetText(): void {
+		window.clearTimeout(this.textTimer);
+		this.textRun++;
+		this.textQuery = "";
+		this.textResult = null;
+		this.textBusy = null;
+		this.textShown = TEXT_NOTES_STEP;
+		this.textSnippets.clear();
+		this.textExpanded.clear();
+		this.textHover = null;
+		this.textCursor = -1;
+		this.plugin.releaseSearchIfIdle();
+	}
+
+	/** Called on every keystroke: the search itself starts after a short pause. */
+	private queueTextSearch(): void {
+		window.clearTimeout(this.textTimer);
+		const q = this.textWanted();
+		this.el.toggleClass("is-text-search", q !== "");
+		if (q === "") {
+			if (this.textResult || this.textQuery) {
+				this.resetText();
+				this.syncFocusButton();
+				this.applyHighlight();
+			}
+			return;
+		}
+		if (q === this.textQuery) return;
+		this.textTimer = window.setTimeout(() => void this.runTextSearch(q, false), TEXT_DELAY_MS);
+	}
+
+	private async runTextSearch(q: string, keep: boolean): Promise<void> {
+		const run = ++this.textRun;
+		const current = () => run === this.textRun;
+		this.textQuery = q;
+		this.textBusy = null;
+		const result = await this.plugin.noteSearch.run(q, () => !current(), (p) => {
+			this.textBusy = p;
+			this.renderBody();
+		});
+		if (!result || !current()) return;
+		if (!keep) {
+			this.textShown = TEXT_NOTES_STEP;
+			this.textExpanded.clear();
+			this.textCursor = -1;
+		}
+		const fresh = new Map<string, { limit: number; list: Snippet[] }>();
+		for (const hit of this.scopedHits(result).slice(0, this.textShown)) {
+			const limit = this.snippetLimit(hit.path);
+			fresh.set(hit.path, { limit, list: await this.plugin.noteSearch.snippetsOf(hit.path, q, limit) });
+			if (!current()) return;
+		}
+		this.textSnippets = fresh;
+		this.textResult = result;
+		this.textBusy = null;
+		this.textHover = null;
+		this.renderBody();
+		this.syncFocusButton();
+		this.applyHighlight();
+	}
+
+	private snippetLimit(path: string): number {
+		return this.textExpanded.has(path) ? TEXT_SNIPPETS_MORE : TEXT_SNIPPETS;
+	}
+
+	/** Reads the snippets that the list needs and does not have yet, then draws the list again. */
+	private async loadSnippets(): Promise<void> {
+		const result = this.textResult;
+		if (!result) return;
+		const run = this.textRun;
+		for (const hit of this.scopedHits(result).slice(0, this.textShown)) {
+			const have = this.textSnippets.get(hit.path);
+			const limit = this.snippetLimit(hit.path);
+			if (have && have.limit >= limit) continue;
+			const list = await this.plugin.noteSearch.snippetsOf(hit.path, result.query, limit);
+			if (run !== this.textRun) return;
+			this.textSnippets.set(hit.path, { limit, list });
+		}
+		this.renderBody();
+	}
+
+	/** The header's "only highlighted" button comes and goes with the results, without redrawing the search box. */
+	private syncFocusButton(): void {
+		const header = this.el.querySelector<HTMLElement>(".gcl-header");
+		if (!header) return;
+		const have = header.querySelector(".gcl-focus");
+		const want = this.wantsFocusButton();
+		if (want && !have) this.addFocusButton(header);
+		else if (!want && have) have.remove();
+	}
+
+	private textHits(): HTMLElement[] {
+		return Array.from(this.bodyEl?.querySelectorAll<HTMLElement>(".gcl-hit") ?? []);
+	}
+
+	/** Arrow keys in the search box: the next or previous found place. False when there is nowhere to go. */
+	private moveTextCursor(step: number): boolean {
+		const items = this.textHits();
+		if (items.length === 0) return false;
+		const next = Math.min(items.length - 1, Math.max(0, this.textCursor + step));
+		this.textCursor = next;
+		this.markTextCursor(items);
+		const path = items[next]?.dataset.path ?? null;
+		if (path !== this.textHover) {
+			this.textHover = path;
+			this.applyHighlight();
+		}
+		return true;
+	}
+
+	/** A clicked place becomes the one the arrow keys go on from. */
+	private setTextCursor(el: HTMLElement): void {
+		const items = this.textHits();
+		this.textCursor = items.indexOf(el);
+		this.markTextCursor(items);
+	}
+
+	private markTextCursor(items: HTMLElement[]): void {
+		items.forEach((el, i) => el.toggleClass("is-cursor", i === this.textCursor));
+		items[this.textCursor]?.scrollIntoView({ block: "nearest" });
+	}
+
+	/**
+	 * What the search found in the text of the notes, above the legend's own rows: the rows move down,
+	 * and everything scrolls together. Returns true when the block is shown.
+	 */
+	private renderTextBlock(body: HTMLElement): boolean {
+		const q = this.textWanted();
+		if (q === "") return false;
+		const str = t();
+		const app = this.plugin.app;
+		const result = this.textResult;
+		const block = body.createDiv({ cls: "gcl-text" });
+
+		const head = block.createDiv({ cls: "gcl-section gcl-text-head" });
+		const icon = head.createSpan({ cls: "gcl-section-icon" });
+		setIcon(icon, this.textCollapsed ? "chevron-right" : "chevron-down");
+		head.createSpan({ cls: "gcl-section-title", text: str.textTitle });
+		const everywhere = this.plugin.settings.searchScope === "all";
+		const hits = this.scopedHits(result);
+		const total = everywhere && result ? result.total : hits.reduce((sum, h) => sum + h.count, 0);
+		if (result) head.createSpan({ cls: "gcl-section-count", text: String(total) });
+		head.addEventListener("click", () => {
+			this.textCollapsed = !this.textCollapsed;
+			this.renderBody();
+		});
+		if (this.textCollapsed) return true;
+
+		const nodes = new Map((getRenderer(this.view)?.nodes ?? []).map((n) => [n.id, n] as const));
+		const stale = !result || result.query !== q;
+		if (this.textBusy) {
+			block.createDiv({ cls: "gcl-text-summary", text: str.textSearching(this.textBusy.done, this.textBusy.total) });
+		} else if (!result) {
+			block.createDiv({ cls: "gcl-text-summary", text: str.textWait });
+		}
+		if (looksLikeQuery(this.searchText)) {
+			const hint = block.createDiv({ cls: "gcl-text-hint" });
+			hint.createSpan({ text: str.textQueryHint });
+			this.addCoreSearchButton(hint);
+		}
+		if (!result) return true;
+
+		// Notes with matches on the other side of the switch: said every time, so that nothing is lost unseen.
+		const outside = everywhere ? 0 : result.hits.length - hits.length;
+		if (hits.length === 0) {
+			let none = everywhere ? str.textNone : str.textNoneGraph;
+			if (outside > 0) none += " " + str.textOutsideNotes(outside);
+			block.createDiv({ cls: "gcl-text-summary", text: none });
+		} else if (!this.textBusy) {
+			const onGraph = hits.filter((h) => nodes.has(h.path)).length;
+			let summary = str.textSummary(total, hits.length);
+			if (onGraph < hits.length) summary += " · " + str.textOnGraph(onGraph);
+			if (outside > 0) summary += " · " + str.textOutside(outside);
+			block.createDiv({ cls: "gcl-text-summary", text: summary });
+		}
+		// Where to look: the notes drawn on this graph, or every note of the vault.
+		const scope = block.createDiv({ cls: "gcl-text-scope" });
+		const choices: [SearchScope, string][] = [
+			["graph", str.textScopeGraph],
+			["all", str.textScopeAll],
+		];
+		for (const [value, label] of choices) {
+			const on = everywhere === (value === "all");
+			const btn = scope.createEl("button", { cls: "gcl-text-scope-button", text: label, attr: { "aria-pressed": String(on) } });
+			btn.toggleClass("is-active", on);
+			btn.addEventListener("click", () => this.setTextScope(value));
+		}
+		block.toggleClass("is-stale", stale);
+
+		let missing = false;
+		for (const hit of hits.slice(0, this.textShown)) {
+			const file = app.vault.getAbstractFileByPath(hit.path);
+			if (!(file instanceof TFile)) continue;
+			const snips = this.textSnippets.get(hit.path)?.list;
+			if (!snips) missing = true;
+			const inText = hit.count - (hit.inName ? 1 : 0);
+			const group = block.createDiv({ cls: "gcl-hit-group" });
+			group.addEventListener("pointerenter", (e) => {
+				if (e.pointerType !== "mouse" || this.textHover === hit.path) return;
+				this.textHover = hit.path;
+				this.applyHighlight();
+			});
+			group.addEventListener("pointerleave", () => {
+				if (this.textHover !== hit.path) return;
+				this.textHover = null;
+				this.applyHighlight();
+			});
+
+			const row = group.createDiv({ cls: "gcl-hit gcl-hit-note" });
+			row.dataset.path = hit.path;
+			const node = nodes.get(hit.path);
+			const rgb = node ? nodeRgb(node) : null;
+			const swatch = row.createSpan({ cls: "gcl-swatch" });
+			if (rgb !== null) swatch.setCssProps({ "--gcl-color": rgbToHex(rgb) });
+			else swatch.addClass("is-attribute");
+			swatch.toggleClass("is-off-graph", !node);
+			const name = row.createSpan({ cls: "gcl-label", text: file.basename });
+			const where = file.parent && file.parent.path !== "/" ? file.parent.path : "";
+			setTooltip(name, where ? `${where}/${file.name}` : file.name, { placement: "top" });
+			if (!node) row.createSpan({ cls: "gcl-hit-tag", text: str.textOffGraph });
+			if (hit.inName && inText === 0) row.createSpan({ cls: "gcl-hit-tag", text: str.textInName });
+			row.createSpan({ cls: "gcl-count", text: String(hit.count) });
+			row.addEventListener("click", (e) => {
+				this.setTextCursor(row);
+				void this.openHit(hit.path, snips?.[0] ?? null, e.ctrlKey || e.metaKey);
+			});
+
+			const shown = (snips ?? []).slice(0, this.snippetLimit(hit.path));
+			for (const snip of shown) {
+				const line = group.createDiv({ cls: "gcl-hit gcl-hit-snippet" });
+				line.dataset.path = hit.path;
+				for (const part of snip.parts) {
+					if (part.hit) line.createEl("mark", { cls: "gcl-hit-mark", text: part.text });
+					else line.createSpan({ text: part.text });
+				}
+				line.addEventListener("click", (e) => {
+					this.setTextCursor(line);
+					void this.openHit(hit.path, snip, e.ctrlKey || e.metaKey);
+				});
+			}
+			// Matches in the lines that are not shown yet.
+			const rest = inText - shown.reduce((sum, x) => sum + x.matches, 0);
+			if (snips && rest > 0 && !this.textExpanded.has(hit.path)) {
+				const more = group.createDiv({ cls: "gcl-hit-more", text: str.tagMore(rest) });
+				more.addEventListener("click", () => {
+					this.textExpanded.add(hit.path);
+					void this.loadSnippets();
+				});
+			}
+		}
+		const hidden = hits.length - this.textShown;
+		if (hidden > 0) {
+			const more = block.createDiv({ cls: "gcl-text-more", text: str.textMoreNotes(hidden) });
+			more.addEventListener("click", () => {
+				this.textShown += TEXT_NOTES_STEP;
+				void this.loadSnippets();
+			});
+		}
+		if (result.skipped > 0) block.createDiv({ cls: "gcl-text-summary", text: str.textSkipped(result.skipped) });
+		if (hits.length > 0 && !looksLikeQuery(this.searchText)) {
+			this.addCoreSearchButton(block.createDiv({ cls: "gcl-text-foot" }));
+		}
+		if (missing) void this.loadSnippets();
+		if (this.textCursor >= 0) this.markTextCursor(this.textHits());
+		return true;
+	}
+
+	/** For anything the plain search does not do: the same text in Obsidian's own search. */
+	private addCoreSearchButton(parent: HTMLElement): void {
+		const str = t();
+		const btn = parent.createEl("button", { cls: "gcl-flash-button gcl-text-core", text: str.textOpenCore });
+		btn.addEventListener("click", () => {
+			if (!openGlobalSearch(this.plugin.app, this.searchText.trim())) new Notice(str.searchOff);
+		});
+	}
+
+	/** Opens a found note with the cursor on the found text. The graph stays on screen where there is room. */
+	private async openHit(path: string, snip: Snippet | null, newTab: boolean): Promise<void> {
+		const app = this.plugin.app;
+		const file = app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return;
+		try {
+			const leaf = this.leafForHit(newTab);
+			await leaf.openFile(file, { active: true, eState: snip ? { line: snip.line } : undefined });
+			const view = leaf.view;
+			if (!snip || !(view instanceof MarkdownView) || view.getMode() !== "source") return;
+			// Reading view only scrolls to the line; the editor also selects the found text.
+			const from = { line: snip.line, ch: snip.ch };
+			const to = { line: snip.line, ch: snip.ch + snip.length };
+			view.editor.setSelection(from, to);
+			view.editor.scrollIntoView({ from, to }, true);
+		} catch {
+			new Notice(t().textOpenFailed);
+		}
+	}
+
+	private leafForHit(newTab: boolean): WorkspaceLeaf {
+		const ws = this.plugin.app.workspace;
+		const own = this.view.leaf;
+		// Phones and tablets: the note takes the graph's place; "back" returns to the graph.
+		if (Platform.isMobile) return own;
+		if (newTab) return ws.getLeaf("tab");
+		const root = own.getRoot();
+		// A graph in a side panel: the note goes to the main area, as links there do.
+		if (root === ws.leftSplit || root === ws.rightSplit) return ws.getLeaf(false);
+		const usable = (leaf: WorkspaceLeaf) => leaf !== own && leaf.parent !== own.parent && leaf.getRoot() === root && !leaf.getViewState().pinned;
+		const leaves: WorkspaceLeaf[] = [];
+		ws.iterateAllLeaves((leaf) => {
+			if (usable(leaf)) leaves.push(leaf);
+		});
+		// The tab used last time; else a note or an empty tab that is on screen next to the graph; else a new split.
+		if (this.resultLeaf && leaves.includes(this.resultLeaf)) return this.resultLeaf;
+		const beside = leaves.find((leaf) => ["markdown", "empty"].includes(leaf.view.getViewType()) && leaf.view.containerEl.isShown());
+		this.resultLeaf = beside ?? ws.createLeafBySplit(own, "vertical");
+		return this.resultLeaf;
 	}
 
 	/** A collapsible block of tags or properties under the color groups. */
@@ -722,7 +1175,7 @@ export class Legend {
 		return entries.length;
 	}
 
-	private renderRows(body: HTMLElement, entries: Entry[], section: DragSection): void {
+	private renderRows(body: HTMLElement, entries: Entry[], section: DragSection | "ungrouped"): void {
 		const s = this.plugin.settings;
 		const str = t();
 		for (const entry of entries) {
@@ -738,16 +1191,21 @@ export class Legend {
 			row.dataset.section = section;
 			if (entry.index !== undefined) row.dataset.index = String(entry.index);
 
-			if (entry.rgb !== null) {
+			const dot = entry.rgb ?? entry.ungrouped?.rgb ?? null;
+			if (dot !== null) {
 				const swatch = row.createSpan({ cls: "gcl-swatch" });
-				swatch.setCssProps({ "--gcl-color": rgbToHex(entry.rgb) });
+				swatch.setCssProps({ "--gcl-color": rgbToHex(dot) });
+			} else if (entry.ungrouped) {
+				// Obsidian gives these nodes no color of their own: the dot takes the theme's node grey.
+				row.createSpan({ cls: "gcl-swatch is-ungrouped" });
 			} else {
 				// Tags and properties have no color of their own.
 				row.createSpan({ cls: "gcl-swatch is-attribute" });
 			}
 
 			// Edit mode: a grip to drag by (on phones the only way, since a long press opens the menu).
-			if (this.editing) {
+			const movable = !entry.ungrouped;
+			if (this.editing && movable) {
 				const grip = row.createSpan({ cls: "gcl-grip" });
 				setIcon(grip, "grip-vertical");
 				setTooltip(grip, section === "groups" ? str.dragHint : str.dragHintOwn);
@@ -761,13 +1219,17 @@ export class Legend {
 				row.prepend(grip);
 			}
 			// Mouse: hold the entry itself and move it.
-			row.addEventListener("pointerdown", (e) => this.armDrag(row, e));
+			if (movable) row.addEventListener("pointerdown", (e) => this.armDrag(row, e));
 
 			// A color group nobody named shows its raw query: say so, and how to name it.
 			const unnamed = entry.rgb !== null && !!entry.query && !this.plugin.hasName(entry.query);
 			const label = row.createSpan({ cls: "gcl-label", text: this.plugin.displayName(entry.query) });
 			if (unnamed) label.addClass("is-unnamed");
-			const tip = entry.query ? `${entry.query}\n${unnamed ? str.noNameHint + "\n" : ""}${str.menuHint}` : str.menuHint;
+			const tip = entry.ungrouped
+				? `${str.ungroupedHint}\n${str.menuHint}`
+				: entry.query
+					? `${entry.query}\n${unnamed ? str.noNameHint + "\n" : ""}${str.menuHint}`
+					: str.menuHint;
 			setTooltip(row, tip, {
 				placement: s.position.endsWith("right") ? "left" : "right",
 			});
@@ -804,13 +1266,15 @@ export class Legend {
 			this.addLongPress(row, entry);
 
 			if (this.editing) {
-				const rename = row.createEl("button", { cls: "gcl-icon-button clickable-icon" });
-				setIcon(rename, "pencil");
-				rename.setAttr("aria-label", str.rename);
-				rename.addEventListener("click", (e) => {
-					e.stopPropagation();
-					this.openMenu(e, entry);
-				});
+				if (!entry.ungrouped) {
+					const rename = row.createEl("button", { cls: "gcl-icon-button clickable-icon" });
+					setIcon(rename, "pencil");
+					rename.setAttr("aria-label", str.rename);
+					rename.addEventListener("click", (e) => {
+						e.stopPropagation();
+						this.openMenu(e, entry);
+					});
+				}
 				// One eye, three states: grey = shown, blue = highlighted, crossed out = hidden.
 				const eye = row.createEl("button", { cls: "gcl-icon-button gcl-eye clickable-icon" });
 				setIcon(eye, state === "hidden" ? "eye-off" : "eye");
@@ -1123,6 +1587,19 @@ export class Legend {
 			);
 		}
 		menu.addItem((item) => item.setTitle(str.showNotes).setIcon("list").onClick(() => this.showNotes(entry)));
+		if (entry.ungrouped) {
+			// No group behind it: nothing to rename or to make a group of.
+			menu.addSeparator();
+			const off = s.hidden.includes(query);
+			menu.addItem((item) =>
+				item
+					.setTitle(off ? str.show : str.hide)
+					.setIcon(off ? "eye" : "eye-off")
+					.onClick(() => this.setState(query, off ? "visible" : "hidden")),
+			);
+			this.plugin.showMenu(menu, evt);
+			return;
+		}
 		if (entry.rgb === null) {
 			menu.addItem((item) =>
 				item
@@ -1168,7 +1645,7 @@ export class Legend {
 			ids = entry.ids;
 		}
 		const files = ids.map((id) => app.vault.getAbstractFileByPath(id)).filter((f): f is TFile => f instanceof TFile);
-		new NotesModal(app, this.plugin.displayName(entry.query), entry.query, files, shared).open();
+		new NotesModal(app, this.plugin.displayName(entry.query), entry.ungrouped ? "" : entry.query, files, shared).open();
 	}
 
 	/** A tag or property becomes a color group of the graph. */
@@ -1326,6 +1803,10 @@ export class Legend {
 		const str = t();
 		const entries = this.shownGroups()
 			.map((g) => ({ name: this.plugin.displayName(g.query), rgb: g.rgb }));
+		const none = this.ungroupedEntry();
+		if (none && !this.plugin.settings.hidden.includes(UNGROUPED)) {
+			entries.push({ name: this.plugin.displayName(UNGROUPED), rgb: none.ungrouped?.rgb ?? 0x888888 });
+		}
 		if (entries.length === 0) return;
 		try {
 			const blob = await legendImage(this.el, str.legend, entries);
@@ -1376,7 +1857,8 @@ export class Legend {
 	}
 
 	private startResize(e: PointerEvent, handle: HTMLElement, dir: string): void {
-		if (e.button !== 0) return;
+		// While search results are shown the legend is larger for the time being; that size is not for keeping.
+		if (e.button !== 0 || this.el.hasClass("is-text-search")) return;
 		e.preventDefault();
 		const rect = this.el.getBoundingClientRect();
 		const box = this.view.contentEl.getBoundingClientRect();
@@ -1417,8 +1899,15 @@ export class Legend {
 	private currentSpec(): HighlightSpec | null {
 		const s = this.plugin.settings;
 		if (!s.highlight || !s.showLegend) return null;
+		const hovering = this.hoverQuery !== null && !this.editing && !this.focusMode;
+		// Text search results take the graph while they are shown; pointing at a legend entry still shows that entry.
+		const found = hovering ? null : this.textIds();
+		if (found) {
+			const one = this.textHover !== null && !this.focusMode && found.includes(this.textHover) ? [this.textHover] : found;
+			return { rgbs: [], ids: one, hideOthers: this.focusMode };
+		}
 		const queries = new Set(this.selected);
-		if (this.hoverQuery !== null && !this.editing && !this.focusMode) queries.add(this.hoverQuery);
+		if (hovering && this.hoverQuery !== null) queries.add(this.hoverQuery);
 		if (queries.size === 0) return null;
 		const spec: HighlightSpec = { rgbs: [], ids: [], hideOthers: this.focusMode };
 		for (const e of this.allEntries()) {

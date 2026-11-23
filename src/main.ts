@@ -5,6 +5,7 @@ import {
 	mergeRawGroups,
 	normalizeGroups,
 	rewriteLiveGroupQueries,
+	UNGROUPED,
 	rewriteRawGroups,
 	setLiveGroupColor,
 	readLiveGroups,
@@ -24,9 +25,11 @@ import { entriesFromFrontmatter, rewriteQueriesInFrontmatter, setNameInFrontmatt
 import { queryKey } from "./query-match";
 import { addPending, diffGroups, groupsKey, RemovedGroup, withKept } from "./group-sync";
 import { RemovedGroupsModal } from "./removed-modal";
+import { NoteSearch } from "./note-search";
 
 export type Position = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "free";
 export type LegendStyle = "list" | "compact";
+export type SearchScope = "graph" | "all";
 /** Where a moved legend stands: its top-left corner as a share of the graph's width and height. */
 export interface LegendOffset {
 	x: number;
@@ -43,6 +46,12 @@ export interface GraphColorLegendSettings {
 	showInLocalGraph: boolean;
 	/** Color groups with no nodes in the graph are left out of the legend (still shown in edit mode and search). */
 	hideEmpty: boolean;
+	/** A last row for the nodes that no color group colors (grey on the graph). */
+	showUngrouped: boolean;
+	/** The legend's search box also looks in the text of the notes. */
+	searchText: boolean;
+	/** Where that search looks: in the notes drawn on the graph, or in all notes of the vault. */
+	searchScope: SearchScope;
 	/** Extra legend sections: tags and properties of the notes in the graph. */
 	showTags: boolean;
 	showProperties: boolean;
@@ -98,6 +107,9 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	highlight: true,
 	showInLocalGraph: true,
 	hideEmpty: true,
+	showUngrouped: true,
+	searchText: true,
+	searchScope: "graph",
 	showTags: true,
 	showProperties: true,
 	collapsedSections: ["properties"],
@@ -129,6 +141,8 @@ const CONTROL_KEYS = [
 	"highlight",
 	"showInLocalGraph",
 	"hideEmpty",
+	"showUngrouped",
+	"searchText",
 	"showTags",
 	"showProperties",
 	"neighbors",
@@ -222,6 +236,9 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		showInLocalGraph:
 			typeof d.showInLocalGraph === "boolean" ? d.showInLocalGraph : DEFAULT_SETTINGS.showInLocalGraph,
 		hideEmpty: typeof d.hideEmpty === "boolean" ? d.hideEmpty : DEFAULT_SETTINGS.hideEmpty,
+		showUngrouped: typeof d.showUngrouped === "boolean" ? d.showUngrouped : DEFAULT_SETTINGS.showUngrouped,
+		searchText: typeof d.searchText === "boolean" ? d.searchText : DEFAULT_SETTINGS.searchText,
+		searchScope: d.searchScope === "all" || d.searchScope === "graph" ? d.searchScope : DEFAULT_SETTINGS.searchScope,
 		showTags: typeof d.showTags === "boolean" ? d.showTags : DEFAULT_SETTINGS.showTags,
 		showProperties: typeof d.showProperties === "boolean" ? d.showProperties : DEFAULT_SETTINGS.showProperties,
 		collapsedSections: Array.isArray(d.collapsedSections)
@@ -269,6 +286,8 @@ export default class GraphColorLegendPlugin extends Plugin {
 	/** Notes that give a legend entry its name (front matter `graph-legend`). */
 	legendNotes = new Map<string, LegendNote>();
 	private legendNotesTimer = 0;
+	/** Text search in the notes, shared by the legends of all open graphs. */
+	noteSearch = new NoteSearch(this.app);
 	/** Undo and redo for the legend's changes; kept until Obsidian restarts. */
 	history = new History(() => {
 		for (const legend of this.legends.values()) legend.update();
@@ -302,6 +321,7 @@ export default class GraphColorLegendPlugin extends Plugin {
 		for (const legend of this.legends.values()) legend.destroy();
 		this.legends.clear();
 		this.highlighter.destroy();
+		this.noteSearch.release();
 	}
 
 	/** The note that describes this entry (front matter `graph-legend`), matched by meaning, not character by character. */
@@ -314,12 +334,14 @@ export default class GraphColorLegendPlugin extends Plugin {
 	 * then a name made from the query.
 	 */
 	displayName(query: string): string {
+		if (query === UNGROUPED) return t().ungrouped;
 		const note = this.legendNote(query);
 		return note?.name || this.settings.names[query] || note?.file.basename || labelFromQuery(query) || "—";
 	}
 
 	/** True when someone gave the entry a name: in the legend, in a note, or by describing it in a note. */
 	hasName(query: string): boolean {
+		if (query === UNGROUPED) return true;
 		return !!(this.settings.names[query] || this.legendNote(query));
 	}
 
@@ -443,6 +465,12 @@ export default class GraphColorLegendPlugin extends Plugin {
 			}
 			if (!same) void this.moveNamesToNotes();
 		}, 500);
+	}
+
+	/** The texts kept for the search are dropped when no legend shows text search results any more. */
+	releaseSearchIfIdle(): void {
+		for (const legend of this.legends.values()) if (legend.usesTextSearch()) return;
+		this.noteSearch.release();
 	}
 
 	private openMenu: Menu | null = null;
@@ -1324,6 +1352,8 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			{ key: "highlight", name: str.highlight, desc: str.highlightDesc, kind: "toggle" },
 			{ key: "showInLocalGraph", name: str.localGraph, desc: str.localGraphDesc, kind: "toggle" },
 			{ key: "hideEmpty", name: str.hideEmpty, desc: str.hideEmptyDesc, kind: "toggle" },
+			{ key: "showUngrouped", name: str.showUngrouped, desc: str.showUngroupedDesc, kind: "toggle" },
+			{ key: "searchText", name: str.searchText, desc: str.searchTextDesc, kind: "toggle" },
 			{ key: "showTags", name: str.showTags, desc: str.showTagsDesc, kind: "toggle" },
 			{ key: "showProperties", name: str.showProperties, desc: str.showPropertiesDesc, kind: "toggle" },
 			{ key: "neighbors", name: str.neighbors, desc: str.neighborsDesc, kind: "toggle" },
