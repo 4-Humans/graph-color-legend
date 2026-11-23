@@ -2,6 +2,20 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.4.0 (2026-11-23)
+
+Find any word from your notes right on the graph.
+
+- **Search in note text.** The legend's search box now also looks in the text and names of your notes. It searches exactly what you type, like Find in a text editor: letter case does not matter, part of a word is enough.
+- **On the graph or everywhere.** A switch under the results chooses where to look: in the notes shown on the graph (the default) or in all notes of the vault. The choice is remembered. The count line always tells how many notes with matches are on the other side.
+- **Results in the legend.** A block under the box shows how many matches there are and in how many notes, then the notes with the lines where the text was found. The legend's own rows move down, and the legend gets wider and taller while results are shown.
+- **Found notes on the graph.** Notes with matches stay bright, the rest fade. "Show only highlighted" leaves only them.
+- **Go to the word.** Click a line to open the note at that place with the found text selected. Arrow keys move through the results, Enter opens.
+- **For complex queries**, a button opens the same text in Obsidian's own search.
+- New setting **Search in note text**, on by default. Notes are read on your device only; nothing is stored or sent.
+- **Notes without a group.** Nodes that no color group colors (grey on the graph) now have their own last row, **No group**, with their count. Point at it or click it to highlight them, or list them from its menu. It is hidden when there are none, and a setting turns it off.
+- **Fixed:** the search field showed a second grey frame inside its own.
+
 ## 2.3.0 (2026-11-21)
 
 For vaults where an AI agent writes the notes and you read the graph.

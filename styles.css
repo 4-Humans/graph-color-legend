@@ -401,3 +401,119 @@ body:not(.is-mobile) .gcl-row { cursor: grab; }
 .gcl-probe-text { color: var(--text-normal); }
 .gcl-probe-faint { color: var(--text-faint); }
 .gcl-probe-border { color: var(--background-modifier-border); }
+
+/* 2.4.0 */
+/* The search field shows only its own frame: Obsidian's frame and fill for a focused or hovered input stay off. */
+.gcl-search-input.gcl-search-input:hover,
+.gcl-search-input.gcl-search-input:focus,
+.gcl-search-input.gcl-search-input:focus-visible,
+.gcl-search-input.gcl-search-input:active {
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	outline: none;
+}
+
+/* Text search in the notes: the legend gets wider while results are shown; the saved size stays as it was. */
+.gcl-legend.is-text-search:not(.has-width) { width: 360px; max-width: calc(100% - 72px); }
+.gcl-legend.is-text-search.has-width { min-width: min(360px, calc(100% - 72px)); }
+.gcl-legend.gcl-pos-free.is-text-search:not(.has-width) { max-width: max(60px, calc(100% - var(--gcl-left) - 8px)); }
+.gcl-legend.gcl-pos-free.is-text-search.has-width { min-width: min(360px, max(60px, calc(100% - var(--gcl-left) - 8px))); }
+/* ...and as tall as the results need: a height set by hand becomes the least height for the time being. */
+.gcl-legend.is-text-search.has-height { height: auto; min-height: min(var(--gcl-height), calc(100% - 24px)); }
+.gcl-legend.gcl-pos-free.is-text-search.has-height { min-height: min(var(--gcl-height), max(32px, calc(100% - var(--gcl-top) - 8px))); }
+.gcl-legend.is-text-search .gcl-resize { display: none; }
+/* The block of results stands above the legend's rows and scrolls with them. */
+.gcl-text {
+	margin-bottom: var(--size-4-1);
+	padding-bottom: var(--size-4-1);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+.gcl-text-head.gcl-text-head { margin-top: 0; border-top: none; }
+.gcl-text-summary { padding: var(--size-2-1) var(--size-4-1); color: var(--text-muted); font-size: 0.9em; }
+.gcl-text-hint {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-2-2) var(--size-4-2);
+	margin: var(--size-2-2) var(--size-4-1);
+	padding: var(--size-2-2) var(--size-4-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background-color: var(--background-secondary);
+	font-size: 0.9em;
+}
+/* Where to look: two halves of one switch, the chosen one filled. */
+.gcl-text-scope { display: flex; margin: var(--size-2-2) var(--size-4-1); }
+.gcl-text-scope-button.gcl-text-scope-button {
+	flex: 1 1 0;
+	min-width: 0;
+	height: auto;
+	padding: var(--size-2-1) var(--size-4-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 0;
+	background-color: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	font-size: 0.9em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+.gcl-text-scope-button.gcl-text-scope-button:first-child { border-radius: var(--radius-s) 0 0 var(--radius-s); }
+.gcl-text-scope-button.gcl-text-scope-button:last-child { border-left: none; border-radius: 0 var(--radius-s) var(--radius-s) 0; }
+.gcl-text-scope-button.gcl-text-scope-button:hover { color: var(--text-normal); background-color: var(--background-modifier-hover); }
+.gcl-text-scope-button.gcl-text-scope-button.is-active,
+.gcl-text-scope-button.gcl-text-scope-button.is-active:hover {
+	border-color: var(--interactive-accent);
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+.is-mobile .gcl-text-scope-button.gcl-text-scope-button { padding-top: var(--size-4-2); padding-bottom: var(--size-4-2); }
+.gcl-text.is-stale .gcl-hit-group { opacity: 0.55; }
+.gcl-hit-group { margin-top: var(--size-2-2); }
+.gcl-hit { border-radius: var(--radius-s); cursor: pointer; }
+.gcl-hit:hover, .gcl-hit.is-cursor { background-color: var(--background-modifier-hover); }
+.gcl-hit.is-cursor { box-shadow: inset 3px 0 0 var(--interactive-accent); }
+.gcl-hit-note {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: var(--size-2-2) var(--size-4-1);
+	font-weight: var(--font-semibold);
+}
+.gcl-swatch.is-off-graph { opacity: 0.35; }
+.gcl-hit-tag { flex: 0 0 auto; color: var(--text-muted); font-size: 0.8em; font-weight: normal; }
+.gcl-hit-snippet {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+	/* In line with the note's name, past its color dot. */
+	margin-left: calc(0.9em + var(--size-4-2));
+	padding: var(--size-2-1) var(--size-4-1);
+	color: var(--text-muted);
+	font-size: 0.92em;
+}
+.gcl-hit-mark {
+	padding: 0 1px;
+	border-radius: 2px;
+	background-color: var(--text-highlight-bg);
+	color: var(--text-normal);
+}
+.gcl-hit-more, .gcl-text-more {
+	padding: var(--size-2-1) var(--size-4-1);
+	color: var(--text-accent);
+	font-size: 0.9em;
+	cursor: pointer;
+}
+.gcl-hit-more { margin-left: calc(0.9em + var(--size-4-2)); }
+.gcl-hit-more:hover, .gcl-text-more:hover { text-decoration: underline; }
+.gcl-text-core.gcl-text-core { color: var(--text-accent); }
+.gcl-text-foot { padding: var(--size-4-1) var(--size-4-1) 0; }
+.is-mobile .gcl-hit-note, .is-mobile .gcl-hit-snippet { padding-top: var(--size-4-1); padding-bottom: var(--size-4-1); }
+
+/* "No group": nodes no color group colors, in the graph's own node grey. */
+.gcl-swatch.is-ungrouped { background-color: var(--graph-node, var(--text-muted)); border-color: transparent; }
