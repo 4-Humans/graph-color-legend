@@ -99,6 +99,8 @@ export class Legend {
 	private hoverQuery: string | null = null;
 	/** Highlighted ("selected") entries. Not saved: they reset when Obsidian restarts. */
 	private selected = new Set<string>();
+	/** Highlighted entries whose linked notes stay bright too (the entry menu), when the setting does not do it for all. */
+	private linked = new Set<string>();
 	/** Set after a long press so the click that follows it does not also toggle the highlight. */
 	private suppressClick = false;
 	/** Search box under the header (not saved). */
@@ -279,6 +281,7 @@ export class Legend {
 	clearSelection(): void {
 		if (this.selected.size === 0) return;
 		this.selected.clear();
+		this.linked.clear();
 		this.update(true);
 	}
 
@@ -357,6 +360,7 @@ export class Legend {
 			if (!known.has(q) || s.hidden.includes(q)) this.selected.delete(q);
 		}
 		if (!s.highlight) this.selected.clear();
+		for (const q of [...this.linked]) if (!this.selected.has(q)) this.linked.delete(q);
 		this.render();
 		this.applyHighlight();
 	}
@@ -1233,6 +1237,12 @@ export class Legend {
 			setTooltip(row, tip, {
 				placement: s.position.endsWith("right") ? "left" : "right",
 			});
+			if (this.linked.has(entry.query) && !s.neighbors) {
+				// Its linked notes are highlighted too (chosen in the entry menu).
+				const mark = row.createSpan({ cls: "gcl-linked-mark" });
+				setIcon(mark, "link");
+				setTooltip(mark, str.neighborsOn, { placement: s.position.endsWith("right") ? "left" : "right" });
+			}
 			if (info) {
 				if (info.warnings.length > 0) {
 					const warn = row.createSpan({ cls: "gcl-warn" });
@@ -1529,8 +1539,20 @@ export class Legend {
 		none.toggleClass("is-disabled", this.selected.size === 0);
 		none.addEventListener("click", () => {
 			this.selected.clear();
+			this.linked.clear();
 			this.update(true);
 		});
+	}
+
+	/** The entry menu's "Highlight linked notes": highlights the entry with the notes linked to it, or stops that. */
+	private toggleLinked(query: string): void {
+		if (this.linked.has(query)) {
+			this.linked.delete(query);
+		} else {
+			this.linked.add(query);
+			this.selected.add(query);
+		}
+		this.update(true);
 	}
 
 	/** Eye button order: shown → highlighted → hidden → shown (no "highlighted" when highlighting is off). */
@@ -1544,7 +1566,10 @@ export class Legend {
 		const s = this.plugin.settings;
 		const wasHidden = s.hidden.includes(query);
 		if (state === "selected") this.selected.add(query);
-		else this.selected.delete(query);
+		else {
+			this.selected.delete(query);
+			this.linked.delete(query);
+		}
 		if ((state === "hidden") !== wasHidden) {
 			const name = this.plugin.displayName(query);
 			void this.plugin.recordSettings(wasHidden ? t().stepShow(name) : t().stepHide(name), () => {
@@ -1574,6 +1599,16 @@ export class Legend {
 					const dom = (item as unknown as { dom?: unknown }).dom;
 					if (dom instanceof HTMLElement) dom.addClass("gcl-menu-select");
 				}
+			});
+			// Linked notes of this entry only. When the setting already does it for every entry, the item shows that.
+			const linked = s.neighbors || this.linked.has(query);
+			menu.addItem((item) => {
+				item
+					.setTitle(str.neighbors)
+					.setIcon("link")
+					.setChecked(linked)
+					.setDisabled(s.neighbors)
+					.onClick(() => this.toggleLinked(query));
 			});
 			menu.addSeparator();
 		}
@@ -1916,27 +1951,43 @@ export class Legend {
 			else spec.ids.push(...e.ids);
 		}
 		if (!spec.rgbs.length && !spec.ids.length) return null;
-		if (s.neighbors) this.addNeighbors(spec);
+		if (s.neighbors) {
+			this.addNeighbors(spec, spec);
+		} else if (this.linked.size > 0) {
+			// Only the entries chosen in their menu bring their linked notes along.
+			const base: HighlightSpec = { rgbs: [], ids: [], hideOthers: false };
+			for (const e of this.allEntries()) {
+				if (!queries.has(e.query) || !this.linked.has(e.query)) continue;
+				if (e.rgb !== null) base.rgbs.push(e.rgb);
+				else base.ids.push(...e.ids);
+			}
+			if (base.rgbs.length || base.ids.length) this.addNeighbors(spec, base);
+		}
 		return spec;
 	}
 
-	/** Also keep the notes that link to, or are linked from, a highlighted note. */
-	private addNeighbors(spec: HighlightSpec): void {
+	/** Also keep the notes that link to, or are linked from, a note of `base` (the whole spec, or a part of it). */
+	private addNeighbors(spec: HighlightSpec, base: HighlightSpec): void {
 		const r = getRenderer(this.view);
 		if (!r) return;
-		const rgbs = new Set(spec.rgbs);
-		const kept = new Set(spec.ids);
-		for (const node of r.nodes) {
-			const rgb = nodeRgb(node);
-			if (rgb !== null && rgbs.has(rgb)) kept.add(node.id);
-		}
+		const nodesOf = (part: HighlightSpec): Set<string> => {
+			const rgbs = new Set(part.rgbs);
+			const ids = new Set(part.ids);
+			for (const node of r.nodes) {
+				const rgb = nodeRgb(node);
+				if (rgb !== null && rgbs.has(rgb)) ids.add(node.id);
+			}
+			return ids;
+		};
+		const kept = nodesOf(spec);
+		const from = base === spec ? kept : nodesOf(base);
 		const extra = new Set<string>();
 		for (const link of r.links) {
 			const a = link.source?.id;
 			const b = link.target?.id;
 			if (typeof a !== "string" || typeof b !== "string") continue;
-			if (kept.has(a) && !kept.has(b)) extra.add(b);
-			else if (kept.has(b) && !kept.has(a)) extra.add(a);
+			if (from.has(a) && !kept.has(b)) extra.add(b);
+			else if (from.has(b) && !kept.has(a)) extra.add(a);
 		}
 		spec.ids = [...kept, ...extra];
 	}
@@ -1951,7 +2002,7 @@ export class Legend {
 		const r = getRenderer(this.view);
 		if (!r) return;
 		// Neighbors depend on the links, which change while the graph is open; same spec = no redraw.
-		if (this.plugin.settings.neighbors) this.plugin.highlighter.set(r, spec);
+		if (this.plugin.settings.neighbors || this.linked.size > 0) this.plugin.highlighter.set(r, spec);
 		this.plugin.highlighter.refresh(r);
 	}
 
