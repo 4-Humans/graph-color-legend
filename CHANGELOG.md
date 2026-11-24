@@ -2,6 +2,10 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.5.1 (2026-11-24)
+
+- **Fixed:** the lock file of the development tools did not install with newer npm, so the plugin directory could not review 2.5.0. The plugin itself works exactly as in 2.5.0.
+
 ## 2.5.0 (2026-11-24)
 
 See how one group connects to the rest of the vault.

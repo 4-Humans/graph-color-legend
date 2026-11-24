@@ -1,6 +1,6 @@
 {
 	"name": "graph-color-legend",
-	"version": "2.5.0",
+	"version": "2.5.1",
 	"description": "Obsidian plugin: legend for graph color groups.",
 	"main": "main.js",
 	"scripts": {
@@ -30,8 +30,6 @@
 		"typescript-eslint": "^8.74.0"
 	},
 	"overrides": {
-		"eslint-plugin-n": {
-			"minimatch": "^11.0.1"
-		}
+		"eslint-plugin-n": "^17.24.0"
 	}
 }
