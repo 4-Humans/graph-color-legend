@@ -235,6 +235,28 @@ export const en = {
 	textOpenFailed: "Could not open the note.",
 	searchText: "Search in note text",
 	searchTextDesc: "The legend's search also looks for what you type in the text of your notes: it counts the matches, highlights the notes on the graph and opens a note at the found place. Turn off for a very large vault or a slow phone.",
+	// 2.6.0: color the graph, the node under the pointer
+	autoOffer: "The graph is one color so far.",
+	autoButton: "Color the graph",
+	autoDesc: "Creates color groups in the graph settings (Groups). Notes are not changed, and you can undo it right after.",
+	autoDescMore: "Adds color groups after the ones the graph already has, for the notes that have no color yet. Notes are not changed, and you can undo it right after.",
+	autoByFolders: "By folders",
+	autoByTags: "By tags",
+	autoByProperty: "By property",
+	autoProperty: "Property",
+	autoInside: (folder: string) => `Folders inside “${folder}”`,
+	autoNoneMode: "Nothing to group by here",
+	autoNothing: "The notes in this graph have no folders, tags or properties to group them by.",
+	autoNothingMore: "The notes that have no color yet share no folders, tags or properties to group them by.",
+	autoMore: (n: number) => `Show ${n} more`,
+	autoSummary: (n: number, total: number) =>
+		n >= total ? `All ${total} notes will be colored.` : `${n} of ${total} notes will be colored. The rest stay grey, in the “No group” row.`,
+	autoSummaryMore: (n: number, total: number) => `${n} of ${total} notes without a group will be colored.`,
+	autoApply: "Color",
+	autoCreated: (n: number) => `Color groups created: ${n}.`,
+	stepAuto: (n: number) => `new color groups: ${n}`,
+	nodeHover: "Show the group of the node under the pointer",
+	nodeHoverDesc: "Point at a node on the graph and its row lights up in the legend: its color group, its tag or “No group”. Uses the graph's internal state, like the highlight. Not on phones.",
 };
 
 export type Strings = typeof en;
