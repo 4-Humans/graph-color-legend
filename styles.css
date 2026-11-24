@@ -520,3 +520,77 @@ body:not(.is-mobile) .gcl-row { cursor: grab; }
 
 /* "No group": nodes no color group colors, in the graph's own node grey. */
 .gcl-swatch.is-ungrouped { background-color: var(--graph-node, var(--text-muted)); border-color: transparent; }
+
+/* 2.6.0: the node under the pointer shows its row. Kept apart from the selected look (blue bar on the left). */
+.gcl-row.is-node-hover {
+	background-color: var(--background-modifier-hover);
+	box-shadow: inset 0 0 0 1.5px var(--interactive-accent);
+}
+.gcl-row.is-selected.is-node-hover {
+	background-color: var(--background-modifier-active-hover);
+	box-shadow: inset 3px 0 0 var(--gcl-select), inset 0 0 0 1.5px var(--interactive-accent);
+}
+
+/* 2.6.0: "Color the graph". The offer at the top of the legend, and the window. */
+.gcl-auto-offer .gcl-flash-text { flex-basis: 100%; }
+.gcl-auto-modes { display: flex; flex-wrap: wrap; gap: var(--size-4-2); margin-bottom: var(--size-4-3); }
+.gcl-auto-mode.is-active, .gcl-auto-mode.is-active:hover {
+	color: var(--text-on-accent);
+	background-color: var(--interactive-accent);
+	box-shadow: none;
+}
+.gcl-auto-mode:disabled { opacity: 0.45; cursor: default; }
+.gcl-auto-key .setting-item { padding-top: 0; border-top: none; }
+.gcl-auto-note { color: var(--text-muted); margin-bottom: var(--size-4-2); }
+.gcl-auto-list {
+	max-height: min(46vh, 420px);
+	overflow-y: auto;
+	margin-bottom: var(--size-4-3);
+	padding: var(--size-2-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+}
+.gcl-auto-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: var(--size-2-2) var(--size-4-2);
+	border-radius: var(--radius-s);
+	cursor: pointer;
+}
+.gcl-auto-row:hover { background-color: var(--background-modifier-hover); }
+.gcl-auto-row input[type="checkbox"] { flex: 0 0 auto; margin: 0; }
+.gcl-auto-swatch { position: relative; width: 1.15em; height: 1.15em; }
+.gcl-auto-color.gcl-auto-color {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	border: none;
+	opacity: 0;
+	cursor: pointer;
+}
+.gcl-auto-row .gcl-count { color: var(--text-muted); }
+.gcl-auto-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* Switched off: the group is not created, so its color says nothing yet. */
+.gcl-auto-row.is-off .gcl-auto-swatch { visibility: hidden; }
+.gcl-auto-row.is-off .gcl-auto-name, .gcl-auto-row.is-off .gcl-count { color: var(--text-faint); }
+.gcl-auto-more.gcl-auto-more {
+	display: block;
+	width: 100%;
+	margin-top: var(--size-2-2);
+	color: var(--text-accent);
+	background: none;
+	box-shadow: none;
+	cursor: pointer;
+}
+.gcl-auto-summary { margin-bottom: var(--size-4-2); color: var(--text-muted); }
+.is-mobile .gcl-auto-row { padding: var(--size-4-2); }
