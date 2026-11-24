@@ -2,12 +2,14 @@
 
 Your graph is a map of your notes. This is its legend and control panel.
 
-![The legend in the corner of the graph](screenshots/screenshot-legend.png)
+![Coloring a graph, highlighting a group and pointing at a node](screenshots/demo.gif)
 
 ## What it does
 
 - Lists the graph's color groups in a small legend, with how many nodes each one colors. Works in the global and the local graph, on desktop and mobile.
+- Colors a graph that has no colors yet: suggests color groups by folders, tags or a property, and creates the ones you choose in one step.
 - Point at an entry to highlight its notes. Click to keep it highlighted, or show only the highlighted nodes.
+- Point at a node to see its row in the legend.
 - Find any word from your notes on the graph: type it in the legend's search, see the matching notes light up, and open a note at the found place.
 - Shows the tags and properties of the notes in the graph. Turn any of them into a color group in one step.
 - Drag entries to reorder groups. A warning appears when a group above takes a group's notes.
@@ -17,7 +19,13 @@ Your graph is a map of your notes. This is its legend and control panel.
 - Copy the legend as a picture or save it in the vault, for notes and slides.
 - Search, resize and collapse the legend, save and apply sets of color groups. Follows your theme, available in 14 languages.
 
+![The legend in the corner of the graph](screenshots/screenshot-legend.png)
+
+![The window that suggests color groups](screenshots/screenshot-color-the-graph.png)
+
 ![Highlighting one group](screenshots/screenshot-highlight.png)
+
+![Pointing at a node lights up its row in the legend](screenshots/screenshot-node.png)
 
 ## Names in the legend
 
@@ -77,6 +85,8 @@ Details: everything read from files is shown as plain text, settings are checked
 <summary>All features in detail</summary>
 
 - **Legend on the graph.** Every color group from the graph settings (Groups) is listed with its color. Works in the global graph and in the local graph. Groups with no notes in the graph are left out (a setting).
+- **Color the graph.** When the global graph has no color groups, the legend offers to create them. A window suggests groups by folders (when nearly all notes lie in one folder, by its subfolders), by tags (top-level tags; a note with several tags takes the rarest one) or by the values of one property, and opens with the way that colors the most notes. Each suggestion shows its color and the number of notes it will color; at most twelve are switched on at first. Switch suggestions off, change colors, then press **Color**. The window is also in the header's right-click menu and in the commands; when the graph already has groups, it suggests groups only for the notes without a color and adds them after yours. Notes are not changed, and **Undo** removes the new groups.
+- **From a node to the legend.** Point at a node on the graph and its row lights up in the legend: its color group, its tag, or **No group**. A row out of sight is scrolled into view. Desktop only; a setting turns it off.
 - **Tags and properties.** Below the color groups, two collapsible sections list the tags and the property values (for example `status: done`) of the notes that the graph shows, with the number of notes. They can be highlighted like groups; the notes keep their own colors. Both sections can be turned off in the settings.
 - **Anywhere on the graph.** Drag the legend by its title to any place on the graph; a short click on the title still collapses it. The place is kept separately for the global and the local graph and stays inside the graph when the window gets smaller. Right-click the header and choose “Back to the corner” to return it.
 - **List or compact.** Two styles: a roomy list, or compact rows for many groups and small screens. Switch in the settings, in the header’s right-click menu or with a command.
@@ -95,7 +105,7 @@ Details: everything read from files is shown as plain text, settings are checked
 - **Tag or property → color group.** The menu of a tag or a property has “Make a color group”: pick a color and whether the group goes first or last.
 - **Show notes.** The menu of any entry lists its notes in the graph, with a filter; click a note to open it, or open the same query in Obsidian's search.
 - **Sets of color groups.** In edit mode, the palette button saves the current groups (queries, colors, order) as a named set and applies saved sets, for example “by status” and “by topic”. Applying a set can be undone. Sets are renamed or deleted in the plugin settings. A local graph has its own groups, so there a set changes only that graph.
-- **Commands.** Undo and redo, show or hide the legend, search the legend and notes, clear all highlights, show only highlighted nodes, highlight linked notes, apply a set, switch the compact style, copy or save the legend as a picture. No hotkeys are set by default; add your own in Settings → Hotkeys.
+- **Commands.** Undo and redo, show or hide the legend, search the legend and notes, clear all highlights, show only highlighted nodes, highlight linked notes, apply a set, switch the compact style, copy or save the legend as a picture, color the graph. No hotkeys are set by default; add your own in Settings → Hotkeys.
 - **Desktop and mobile.** No Node.js or Electron APIs. Touch targets are larger on phones.
 - **Follows your theme.** Uses Obsidian's CSS variables.
 - **Your language.** The plugin's menus follow the Obsidian interface language: English, Chinese (Simplified and Traditional), French, German, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish, Turkish and Ukrainian. Other languages fall back to English. Names and tags can be written in any script, and emoji work in tags too. Translations other than English and Russian were made without a native speaker; corrections are welcome as issues or pull requests (files in `src/locales/`).
@@ -114,6 +124,7 @@ Details: everything read from files is shown as plain text, settings are checked
 - Show notes without a group: on by default. A last row for the nodes that no color group colors (grey on the graph).
 - Show tags, show properties: on or off.
 - Highlight linked notes: on or off.
+- Show the group of the node under the pointer: on by default. Pointing at a node on the graph lights up its row in the legend. Not on phones.
 - Search in note text: on by default. The legend's search also looks in the text of your notes. Turn it off for a very large vault or a slow phone.
 - Show the legend: on or off (also a command).
 - Sets of color groups: rename or delete.
@@ -133,9 +144,11 @@ The color groups belong to Obsidian's graph (Settings of the graph view, Groups)
 <details>
 <summary>How it works and limits</summary>
 
-Obsidian has no public API for the graph view. The plugin reads the color groups that the graph view itself shows (falling back to `.obsidian/graph.json`) and, for the highlight, lowers the opacity of the nodes outside the chosen group after the graph draws them. All of this is wrapped in checks: if a future Obsidian version changes the graph internals, the highlight switches itself off and the legend keeps working. Tested with Obsidian 1.15.0.
+Obsidian has no public API for the graph view. The plugin reads the color groups that the graph view itself shows (falling back to `.obsidian/graph.json`) and, for the highlight, lowers the opacity of the nodes outside the chosen group after the graph draws them. For the row of the node under the pointer, it reads which node the graph itself marks as pointed at. All of this is wrapped in checks: if a future Obsidian version changes the graph internals, the highlight switches itself off and the legend keeps working. Tested with Obsidian 1.15.0.
 
 Groups that share exactly the same color are highlighted together, because nodes are matched by color.
+
+"Color the graph" writes a folder as `path:Folder/`. The graph looks for that text anywhere in a note's path, so `path:Notes/` also finds the notes in `Meeting Notes/`. The suggested groups are therefore written in an order where each folder keeps its own color, and the legend's warning tells which notes a group above has taken.
 
 Renaming a tag in notes uses Obsidian's own file API (`vault.process`, `fileManager.processFrontMatter`). Tags inside code blocks are not touched. A note is only edited if the tag is still exactly where Obsidian's index says it is; otherwise the note is skipped and listed. Obsidian may rewrite a `tags` property in list form when it saves properties. The undo keeps the texts in memory until Obsidian restarts; for anything older, keep a backup or use version control.
 

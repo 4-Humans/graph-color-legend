@@ -2,6 +2,18 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.6.0 (2026-11-25)
+
+Color a new graph in one step, and see which group a node belongs to.
+
+- **Color the graph.** When the graph has no color groups yet, the legend offers to create them. A window suggests groups by folders, by tags or by the values of a property, and opens with the way that colors the most notes. Each suggestion shows its color and how many notes it will color. Switch any of them off or change a color, then press **Color**.
+- **Colors you can tell apart.** At most twelve suggestions are switched on at first. No color is given twice, and colors that would not show on the graph's background (dark blue on a dark theme, yellow on a light one) are left out.
+- **Also when the graph has groups.** The right-click menu of the legend's header and the command **Color the graph** open the same window. It then suggests groups only for the notes that have no color yet, and adds them after your own groups.
+- **Your notes are not changed.** The new groups are ordinary color groups of the graph (settings of the graph view, Groups). **Undo** in the legend removes them. **Not needed** hides the offer.
+- **From a node to the legend.** Point at a node on the graph and its row lights up in the legend: its color group, its tag, or **No group**. A row that is out of sight is scrolled into view. New setting **Show the group of the node under the pointer**, on by default. Not on phones.
+- **Fixed:** after you undid the first color groups of a graph, the legend offered to bring them back.
+- **Fixed:** when Obsidian was closed right after the legend changed the color groups, the next start showed them as removed outside Obsidian.
+
 ## 2.5.1 (2026-11-24)
 
 - **Fixed:** the lock file of the development tools did not install with newer npm, so the plugin directory could not review 2.5.0. The plugin itself works exactly as in 2.5.0.
