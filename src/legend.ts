@@ -1,7 +1,9 @@
 import { MarkdownView, Menu, Notice, Platform, TFile, View, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import { AttributeEntry, Attributes, collectAttributes, collectNotes } from "./attributes";
+import { autoOptions, type AutoOption } from "./auto-groups";
+import { AutoGroupsModal } from "./auto-modal";
 import { EntryModal } from "./entry-modal";
-import { ColorGroup, getRenderer, nodeRgb, openGlobalSearch, readLiveGroups, UNGROUPED } from "./graph-internals";
+import { ColorGroup, getRenderer, GraphNode, hoveredNode, nodeRgb, openGlobalSearch, readLiveGroups, UNGROUPED } from "./graph-internals";
 import { freeColor, NewGroupModal, NotesModal, PathsModal, PresetNameModal } from "./modals";
 import { matchNotes, NoteInfo } from "./query-match";
 import { HighlightSpec } from "./highlight";
@@ -88,6 +90,13 @@ const TEXT_SNIPPETS_MORE = 50;
 
 const EMPTY_ATTRS: Attributes = { tags: [], properties: [], signature: "" };
 
+/** "Color the graph" is offered only when there is something to color. */
+const AUTO_MIN_NOTES = 2;
+/** The pointer rests on a node this long before the legend scrolls to its row. */
+const NODE_HOVER_SCROLL_MS = 300;
+/** Background the graph is drawn on, by theme: used to leave out colors that would not show on it. */
+const GRAPH_BG = { dark: 0x1e1e1e, light: 0xffffff };
+
 /** One legend panel attached to one graph view. */
 export class Legend {
 	readonly el: HTMLElement;
@@ -146,6 +155,12 @@ export class Legend {
 	private pointerInside = false;
 	/** Set when the legend was just moved by its title, so the click that ends the move does not collapse it. */
 	private justMoved = false;
+	/** Rows of the graph node under the pointer (queries), so they can be marked again after a redraw. */
+	private nodeHoverQueries: string[] = [];
+	private nodeHoverFrame = 0;
+	private nodeHoverTimer = 0;
+	private autoFor: NoteInfo[] | null = null;
+	private autoAny = false;
 
 	constructor(
 		private plugin: GraphColorLegendPlugin,
@@ -171,10 +186,16 @@ export class Legend {
 			this.pointerInside = true;
 			if (this.flashMsg && this.flashSticky(this.flashMsg)) window.clearTimeout(this.flashTimer);
 		});
+		view.contentEl.addEventListener("pointermove", this.onGraphPointer);
+		view.contentEl.addEventListener("pointerleave", this.onGraphLeave);
 		this.update(true);
 	}
 
 	destroy(): void {
+		this.view.contentEl.removeEventListener("pointermove", this.onGraphPointer);
+		this.view.contentEl.removeEventListener("pointerleave", this.onGraphLeave);
+		if (this.nodeHoverFrame) this.el.win.cancelAnimationFrame(this.nodeHoverFrame);
+		window.clearTimeout(this.nodeHoverTimer);
 		window.clearTimeout(this.flashTimer);
 		this.searchOpen = false;
 		this.resetText();
@@ -306,6 +327,8 @@ export class Legend {
 	/** Re-reads groups; rebuilds only if something changed (or when forced). */
 	update(force = false): void {
 		if (this.drag) return;
+		// The pointer left the window without a move over the graph: the graph has let go of the node, so does the legend.
+		if (this.nodeHoverQueries.length > 0 && !hoveredNode(this.view)) this.setNodeHover([]);
 		const live = readLiveGroups(this.view);
 		const groups = live ?? (this.isLocal ? [] : (this.plugin.fileGroups ?? []));
 		this.refreshAttributes(force, groups);
@@ -339,6 +362,8 @@ export class Legend {
 			s.searchText,
 			s.searchScope,
 			this.groupsLost(),
+			this.wantsAutoOffer(),
+			s.nodeHover,
 			this.isLocal ? 0 : this.plugin.settings.pendingRemoved.length,
 			s.collapsedSections,
 			s.names,
@@ -498,13 +523,16 @@ export class Legend {
 		if (this.flashMsg) this.renderFlash(this.flashMsg);
 		if (this.groupsLost()) this.renderLostBar();
 		if (!this.isLocal && this.plugin.settings.pendingRemoved.length > 0) this.renderRemovedBar();
+		const offer = this.wantsAutoOffer();
+		if (offer) this.renderAutoOffer();
 		if (this.focusMode) this.renderFocusBar();
 
 		const body = el.createDiv({ cls: "gcl-body" });
 		this.bodyEl = body;
 		this.addResizeHandles();
 		if (!hasAny) {
-			body.createDiv({ cls: "gcl-empty", text: str.noGroups });
+			// The offer above already says what to do.
+			if (!offer) body.createDiv({ cls: "gcl-empty", text: str.noGroups });
 			return;
 		}
 		this.renderBody();
@@ -526,6 +554,7 @@ export class Legend {
 		this.renderRows(body, ungrouped, "ungrouped");
 		const shown = groups.length + ungrouped.length + this.renderSection(body, "tags", str.sectionTags) + this.renderSection(body, "properties", str.sectionProperties);
 		if (this.searching() && shown === 0 && !text) body.createDiv({ cls: "gcl-empty", text: str.noMatches });
+		this.markNodeRows(false);
 	}
 
 	private searching(): boolean {
@@ -677,6 +706,83 @@ export class Legend {
 		restore.addEventListener("click", () => void this.plugin.restoreGroupsBackup(this));
 		const drop = bar.createEl("button", { cls: "gcl-flash-button gcl-flash-undo", text: str.groupsKeepEmpty });
 		drop.addEventListener("click", () => void this.plugin.dropGroupsBackup());
+	}
+
+	/**
+	 * The global graph has had no color groups for a moment, and there is no saved copy to offer back:
+	 * the legend offers to color the graph. "Not needed" turns the offer off for this vault.
+	 */
+	private wantsAutoOffer(): boolean {
+		const s = this.plugin.settings;
+		return (
+			!this.isLocal &&
+			s.autoOffer &&
+			this.noGroupsSince !== null &&
+			Date.now() - this.noGroupsSince >= LOST_GROUPS_MS &&
+			s.groupsBackup.length === 0 &&
+			this.canAutoColor()
+		);
+	}
+
+	/** Whether there is anything to suggest for these notes; worked out once per set of notes. */
+	private canAutoColor(): boolean {
+		if (this.autoFor !== this.notes) {
+			this.autoFor = this.notes;
+			this.autoAny = this.notes.length >= AUTO_MIN_NOTES && this.autoSuggestions(this.notes).options.length > 0;
+		}
+		return this.autoAny;
+	}
+
+	/** The ways to color what has no color yet: new groups go last, so they can only color what no group colors now. */
+	private autoSuggestions(notes: NoteInfo[]): { options: AutoOption[]; free: Set<string> | null } {
+		const attrs = collectAttributes(this.plugin.app, notes);
+		const noteIds = new Set(notes.map((n) => n.id));
+		const free = this.groups.length > 0 ? new Set(this.ungroupedIds.filter((id) => noteIds.has(id))) : null;
+		const options = autoOptions({
+			notes,
+			tags: attrs.tags,
+			properties: attrs.properties,
+			free,
+			existing: this.groups.map((g) => g.query),
+		});
+		return { options, free };
+	}
+
+	private renderAutoOffer(): void {
+		const str = t();
+		const bar = this.el.createDiv({ cls: "gcl-flash gcl-auto-offer" });
+		bar.createSpan({ cls: "gcl-flash-text", text: str.autoOffer });
+		const go = bar.createEl("button", { cls: "gcl-flash-button gcl-flash-redo", text: str.autoButton });
+		go.addEventListener("click", () => this.openAutoGroups());
+		const no = bar.createEl("button", { cls: "gcl-flash-button", text: str.groupsKeepEmpty });
+		no.addEventListener("click", () => {
+			this.plugin.settings.autoOffer = false;
+			void this.plugin.saveSettingsAndRefresh();
+		});
+	}
+
+	/**
+	 * "Color the graph": suggests color groups by folders, by tags or by a property, and adds the chosen
+	 * ones after the groups the graph already has. Notes are not changed; the step can be undone.
+	 */
+	openAutoGroups(): void {
+		if (this.isLocal) return;
+		const app = this.plugin.app;
+		const notes = collectNotes(app, getRenderer(this.view));
+		const hasGroups = this.groups.length > 0;
+		const { options, free } = this.autoSuggestions(notes);
+		const context = {
+			freeNotes: free ? free.size : notes.length,
+			hasGroups,
+			used: this.groups.map((g) => g.rgb),
+			background: this.el.doc.body.hasClass("theme-dark") ? GRAPH_BG.dark : GRAPH_BG.light,
+			name: (query: string) => this.plugin.displayName(query),
+		};
+		new AutoGroupsModal(app, options, context, (groups) => {
+			const str = t();
+			const next = [...this.currentGroups(), ...groups];
+			void this.plugin.changeGroups(this, next, str.stepAuto(groups.length), str.autoCreated(groups.length));
+		}).open();
 	}
 
 	/** Groups removed from graph.json outside Obsidian wait here until the person looks at them. */
@@ -1785,6 +1891,10 @@ export class Legend {
 					}),
 			);
 		}
+		if (!this.isLocal) {
+			menu.addSeparator();
+			menu.addItem((item) => item.setTitle(str.autoButton).setIcon("paint-bucket").onClick(() => this.openAutoGroups()));
+		}
 		if (this.hasGroups()) {
 			menu.addSeparator();
 			this.addImageItems(menu);
@@ -1927,6 +2037,80 @@ export class Legend {
 		handle.addEventListener("pointermove", move);
 		handle.addEventListener("pointerup", end);
 		handle.addEventListener("pointercancel", end);
+	}
+
+	// ---- the graph node under the pointer ---------------------------------
+
+	private onGraphPointer = (e: PointerEvent): void => {
+		if (e.pointerType === "touch") return;
+		// Over the legend or the graph's own controls the graph can still hold the last node it pointed at.
+		if (!e.targetNode?.instanceOf(HTMLCanvasElement)) {
+			this.setNodeHover([]);
+			return;
+		}
+		if (this.nodeHoverFrame) return;
+		// On the next frame: by then the graph's own handlers have run for this move.
+		this.nodeHoverFrame = this.el.win.requestAnimationFrame(() => {
+			this.nodeHoverFrame = 0;
+			this.syncNodeHover();
+		});
+	};
+
+	private onGraphLeave = (): void => {
+		this.setNodeHover([]);
+	};
+
+	private syncNodeHover(): void {
+		const s = this.plugin.settings;
+		const node = s.nodeHover && s.showLegend && !s.collapsed && !this.drag ? hoveredNode(this.view) : null;
+		this.setNodeHover(node ? this.rowQueries(node) : []);
+	}
+
+	/** The legend rows a node belongs to: its tag, its color group (every group of that color), or "No group". */
+	private rowQueries(node: GraphNode): string[] {
+		if (node.type === "tag") {
+			const wanted = `tag:${node.id}`.toLowerCase();
+			return this.allEntries()
+				.map((e) => e.query)
+				.filter((q) => q.trim().toLowerCase() === wanted);
+		}
+		const rgb = nodeRgb(node);
+		const groups = rgb === null ? [] : this.groups.filter((g) => g.rgb === rgb).map((g) => g.query);
+		return groups.length > 0 ? groups : [UNGROUPED];
+	}
+
+	private setNodeHover(queries: string[]): void {
+		const now = this.nodeHoverQueries;
+		if (queries.length === now.length && queries.every((q, i) => q === now[i])) return;
+		this.nodeHoverQueries = queries;
+		this.markNodeRows(true);
+	}
+
+	/** Marks the rows of the node under the pointer. With `reveal`, a row out of sight is scrolled to after a short rest. */
+	private markNodeRows(reveal: boolean): void {
+		const body = this.bodyEl;
+		if (!body) return;
+		window.clearTimeout(this.nodeHoverTimer);
+		const wanted = new Set(this.plugin.settings.nodeHover ? this.nodeHoverQueries : []);
+		let first: HTMLElement | null = null;
+		for (const row of Array.from(body.querySelectorAll<HTMLElement>(".gcl-row"))) {
+			const on = wanted.has(row.dataset.query ?? "");
+			row.toggleClass("is-node-hover", on);
+			if (on && !first) first = row;
+		}
+		if (!first || !reveal) return;
+		const row = first;
+		this.nodeHoverTimer = window.setTimeout(() => this.revealRow(row), NODE_HOVER_SCROLL_MS);
+	}
+
+	private revealRow(row: HTMLElement): void {
+		const body = this.bodyEl;
+		if (!body || !row.isConnected) return;
+		const b = body.getBoundingClientRect();
+		const r = row.getBoundingClientRect();
+		if (r.top >= b.top && r.bottom <= b.bottom) return;
+		const delta = r.top < b.top ? r.top - b.top - 4 : r.bottom - b.bottom + 4;
+		body.scrollTo({ top: body.scrollTop + delta, behavior: "smooth" });
 	}
 
 	// ---- highlight --------------------------------------------------------

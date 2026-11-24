@@ -83,6 +83,10 @@ export interface GraphColorLegendSettings {
 	style: LegendStyle;
 	/** Place of the legend moved by its title (position "free"), kept apart for the global and the local graph. */
 	offset: { graph: LegendOffset | null; local: LegendOffset | null };
+	/** A graph without color groups gets an offer to color it; "Not needed" turns the offer off. */
+	autoOffer: boolean;
+	/** The graph node under the pointer lights up its row in the legend. */
+	nodeHover: boolean;
 }
 
 
@@ -126,6 +130,8 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	order: { tags: [], properties: [] },
 	style: "list",
 	offset: { graph: null, local: null },
+	autoOffer: true,
+	nodeHover: true,
 };
 // Note: DEFAULT_SETTINGS.names is never used directly; sanitizeSettings makes a fresh object.
 
@@ -146,6 +152,7 @@ const CONTROL_KEYS = [
 	"showTags",
 	"showProperties",
 	"neighbors",
+	"nodeHover",
 	"showLegend",
 ] as const;
 type ControlKey = (typeof CONTROL_KEYS)[number];
@@ -266,6 +273,8 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 			const o = (typeof d.offset === "object" && d.offset !== null ? d.offset : {}) as Record<string, unknown>;
 			return { graph: sanitizeOffset(o.graph), local: sanitizeOffset(o.local) };
 		})(),
+		autoOffer: typeof d.autoOffer === "boolean" ? d.autoOffer : DEFAULT_SETTINGS.autoOffer,
+		nodeHover: typeof d.nodeHover === "boolean" ? d.nodeHover : DEFAULT_SETTINGS.nodeHover,
 	};
 }
 
@@ -574,6 +583,16 @@ export default class GraphColorLegendPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
+			id: "color-graph",
+			name: str.autoButton,
+			checkCallback: (checking) => {
+				const legend = this.activeLegend();
+				if (!legend || legend.isLocal) return false;
+				if (!checking) legend.openAutoGroups();
+				return true;
+			},
+		});
+		this.addCommand({
 			id: "toggle-compact",
 			name: str.cmdCompact,
 			callback: () => {
@@ -619,6 +638,9 @@ export default class GraphColorLegendPlugin extends Plugin {
 		const prev = legend.currentGroups();
 		const view = legend.view;
 		const isLocal = legend.isLocal;
+		// The first groups of a graph that had none: undoing them leaves the saved copy as it was too,
+		// or the legend would offer to bring back the very groups that were just undone.
+		const copyBefore = !isLocal && prev.length === 0 ? this.settings.groupsBackup.map((g) => ({ ...g })) : null;
 		const ok = await this.replaceGroups(view, isLocal, next);
 		if (!ok) {
 			new Notice(t().groupsFailed, 8000);
@@ -628,6 +650,10 @@ export default class GraphColorLegendPlugin extends Plugin {
 			label,
 			undo: async () => {
 				await this.replaceGroups(view, isLocal, prev);
+				if (copyBefore) {
+					this.settings.groupsBackup = copyBefore.map((g) => ({ ...g }));
+					await this.saveSettingsQuiet();
+				}
 			},
 			redo: async () => {
 				await this.replaceGroups(view, isLocal, next);
@@ -848,6 +874,9 @@ export default class GraphColorLegendPlugin extends Plugin {
 				}
 			}
 		}
+		// The plugin's own change is what it knows from now on, at once: closing Obsidian right after it
+		// must not make the change look like one made from outside at the next start.
+		if (!isLocal && reached) await this.setKnown(next);
 		await this.loadFileGroups();
 		for (const legend of this.legends.values()) legend.update(true);
 		return reached;
@@ -887,6 +916,8 @@ export default class GraphColorLegendPlugin extends Plugin {
 	/** "Not needed": the groups were removed on purpose, so the copy is dropped. */
 	async dropGroupsBackup(): Promise<void> {
 		this.settings.groupsBackup = [];
+		// The graph was left without colors on purpose: no offer to color it either (the menu still has it).
+		this.settings.autoOffer = false;
 		await this.saveSettingsAndRefresh();
 	}
 
@@ -1357,6 +1388,7 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			{ key: "showTags", name: str.showTags, desc: str.showTagsDesc, kind: "toggle" },
 			{ key: "showProperties", name: str.showProperties, desc: str.showPropertiesDesc, kind: "toggle" },
 			{ key: "neighbors", name: str.neighbors, desc: str.neighborsDesc, kind: "toggle" },
+			{ key: "nodeHover", name: str.nodeHover, desc: str.nodeHoverDesc, kind: "toggle" },
 			{ key: "showLegend", name: str.showLegend, desc: str.showLegendDesc, kind: "toggle" },
 		];
 	}

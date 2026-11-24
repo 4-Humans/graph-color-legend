@@ -9,6 +9,7 @@
  *   view.renderer.nodes[]: { id, type, color: { a, rgb } | null, circle, text, render() }
  *   view.renderer.links[]: { source, target, line, arrow, render() }
  *   view.renderer.changed()
+ *   view.renderer.highlightNode: the node under the pointer, or null (checked against 1.15.1)
  */
 import type { View } from "obsidian";
 
@@ -50,6 +51,8 @@ export interface GraphRenderer {
 	nodes: GraphNode[];
 	links: GraphLink[];
 	changed(): void;
+	/** The node under the pointer (undocumented, like the rest: read with care). */
+	highlightNode?: unknown;
 }
 
 interface ColorGroupOptions {
@@ -104,13 +107,26 @@ export function getRenderer(view: View): GraphRenderer | null {
 	return r;
 }
 
-/** Fill color of a node as an RGB integer, or null if it has no group color. */
 /** Legend key of the row for nodes that no color group colors (never a query of the graph). */
 export const UNGROUPED = "graph-legend:ungrouped";
 
+/** Fill color of a node as an RGB integer, or null if it has no group color. */
 export function nodeRgb(node: GraphNode): number | null {
 	const c = node.color;
 	return isObject(c) && typeof c.rgb === "number" ? c.rgb : null;
+}
+
+/**
+ * The node under the pointer, as the graph itself tracks it. Only read, never set.
+ * Null when there is none, or when this Obsidian version keeps it somewhere else.
+ */
+export function hoveredNode(view: View): GraphNode | null {
+	try {
+		const node = getRenderer(view)?.highlightNode;
+		return isObject(node) && typeof node.id === "string" ? (node as unknown as GraphNode) : null;
+	} catch {
+		return null;
+	}
 }
 
 interface WritableColorGroupOptions extends ColorGroupOptions {
