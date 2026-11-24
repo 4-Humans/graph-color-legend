@@ -1,0 +1,33 @@
+# Checks every push and pull request the way a release and the Obsidian directory do,
+# so a version that would fail the directory's review is caught before it is released.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 10 builds the release; the Obsidian directory installs with the newest npm.
+        npm: [10, 11, latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install -g npm@${{ matrix.npm }}
+      - run: npm ci
+      - run: npm run build
+      - run: npx eslint .
+      - run: npm test
+      - run: node tests/check-release.mjs
