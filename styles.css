@@ -315,6 +315,9 @@ body:not(.is-mobile) .gcl-row { cursor: grab; }
 /* A group covered by a group above, or sharing its color with another group. */
 .gcl-warn { flex: 0 0 auto; display: inline-flex; color: var(--text-warning); }
 .gcl-warn svg { width: 0.95em; height: 0.95em; }
+/* 2.5.0: the entry's linked notes are highlighted too. */
+.gcl-linked-mark { flex: 0 0 auto; display: inline-flex; color: var(--text-accent); }
+.gcl-linked-mark svg { width: 0.95em; height: 0.95em; }
 .gcl-row.is-empty .gcl-label { color: var(--text-faint); }
 .gcl-label.is-unnamed { font-style: italic; }
 .gcl-preset-dots { display: inline-flex; gap: 3px; margin-right: var(--size-4-2); vertical-align: middle; }

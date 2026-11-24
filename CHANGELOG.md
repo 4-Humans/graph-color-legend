@@ -2,6 +2,12 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.5.0 (2026-11-24)
+
+See how one group connects to the rest of the vault.
+
+- **Linked notes for one entry.** The entry menu has a new item, **Highlight linked notes**. It highlights the entry and keeps the notes linked to it bright too, for this entry only; the setting for all entries stays as it is. A link mark appears on the row. Choose the item again to turn it off; the entry stays highlighted. When the setting is on for all entries, the item is shown checked and greyed out.
+
 ## 2.4.0 (2026-11-23)
 
 Find any word from your notes right on the graph.
