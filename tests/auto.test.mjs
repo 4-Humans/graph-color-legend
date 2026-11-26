@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { assign, autoOptions, bestOption, contrast, defaultChosen, folderQuery, listed, nextColor } from "./auto.bundle.mjs";
+import { assign, autoOptions, bestOption, colorDistance, contrast, defaultChosen, distinctColor, folderQuery, listed, nextColor, similarColors, visibleColors } from "./auto.bundle.mjs";
 import { matchNotes } from "./query.bundle.mjs";
 
 const note = (path, tags = [], frontmatter = null) => ({ id: path, path, name: path.split("/").pop(), tags, frontmatter });
@@ -184,4 +184,70 @@ assert.equal(option(autoOptions(input([...many("wiki", 9), note("a.md")])), "fol
 	}
 }
 
+// ---- colors that are hard to tell apart ------------------------------------
+{
+	const palette = [
+		0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231, 0x911eb4, 0x42d4f4, 0xf032e6, 0xbfef45, 0xfabed4, 0x469990,
+		0xdcbeff, 0x9a6324, 0x800000, 0xaaffc3, 0x808000, 0x000075,
+	];
+	const dark = 0x1e1e1e;
+	const light = 0xffffff;
+	assert.equal(colorDistance(0x123456, 0x123456), 0);
+	assert.ok(colorDistance(0x000000, 0xffffff) > 0.99 && colorDistance(0x000000, 0xffffff) < 1.01);
+	// Neighboring shades are similar; the same color is not (it has its own warning); clearly different ones are not.
+	assert.ok(similarColors(0xe06c75, 0xe5707a));
+	assert.ok(similarColors(0x339af0, 0x4dabf7));
+	assert.ok(similarColors(0x800080, 0x8b008b));
+	assert.ok(!similarColors(0xe6194b, 0xe6194b));
+	assert.ok(!similarColors(0xff0000, 0xff6600));
+	assert.ok(!similarColors(0x1e90ff, 0x4169e1));
+	// No two colors of the palette are similar, so the plugin's own suggestions never raise the warning.
+	for (const a of palette) for (const b of palette) assert.ok(!similarColors(a, b), `${a.toString(16)} ~ ${b.toString(16)}`);
+
+	// A new group does not get a palette color that is hard to tell from one the graph already has.
+	assert.ok(similarColors(0xe6194b, 0xe01f50));
+	assert.equal(nextColor(palette, [0xe01f50], dark), 0x3cb44b);
+	assert.equal(nextColor(palette, [0xe01f50, 0x3fb04e], dark), 0xffe119);
+	// Nothing left that stands apart: still an unused color rather than none.
+	const crowded = palette.map((c) => c ^ 0x010101);
+	const c = nextColor(palette, crowded, dark);
+	assert.ok(palette.includes(c));
+	// New hues keep away from the colors in use while they can.
+	const used = [...palette];
+	for (let i = 0; i < 10; i++) {
+		const n = nextColor(palette, used, dark);
+		assert.ok(used.every((u) => !similarColors(u, n)), `new color ${n.toString(16)} is close to a used one`);
+		used.push(n);
+	}
+
+	// "Pick a color that stands out": far from all the others, visible on the background, on both themes.
+	for (const bg of [dark, light]) {
+		const others = [0xe6194b, 0xe01f50, 0x3cb44b, 0x4363d8];
+		const d = distinctColor(palette, others, bg);
+		assert.ok(contrast(d, bg) >= 2);
+		assert.ok(others.every((o) => !similarColors(o, d) && o !== d));
+		assert.ok(Math.min(...others.map((o) => colorDistance(o, d))) > 0.15);
+		// The whole palette taken: still a color that is none of them.
+		const all = distinctColor(palette, palette, bg);
+		assert.ok(!palette.includes(all) && contrast(all, bg) >= 2);
+	}
+	// With no other groups any visible color will do.
+	assert.ok(contrast(distinctColor(palette, [], dark), dark) >= 2);
+}
+
 console.log("auto: ok");
+
+// Plain red next to the palette's crimson is hard to tell apart on a graph and counts as similar;
+// the closest pair of the built-in palette does not.
+{
+	assert.equal(similarColors(0xff0000, 0xe6194b), true);
+	assert.equal(similarColors(0xfabed4, 0xdcbeff), false);
+}
+
+// The default colors of the rule for AI agents are exactly the palette colors that show on both themes.
+{
+	const palette = [0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231, 0x911eb4, 0x42d4f4, 0xf032e6, 0xbfef45, 0xfabed4, 0x469990, 0xdcbeff, 0x9a6324, 0x800000, 0xaaffc3, 0x808000, 0x000075];
+	const both = visibleColors(visibleColors(palette, 0x1e1e1e), 0xffffff);
+	assert.deepEqual(both, [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4, 0xf032e6, 0x469990, 0x9a6324, 0x808000]);
+	assert.equal(visibleColors(palette, 0x1e1e1e).length, 15);
+}
