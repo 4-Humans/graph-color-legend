@@ -1,7 +1,7 @@
 {
 	"id": "graph-color-legend",
 	"name": "Graph Color Legend",
-	"version": "2.7.0",
+	"version": "2.7.1",
 	"minAppVersion": "1.8.7",
 	"description": "Mission control for your graph. A color legend, one-click highlighting, word search across your notes and tag renaming, all in one place.",
 	"author": "4 Humans",

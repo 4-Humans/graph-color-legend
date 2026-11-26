@@ -596,8 +596,9 @@ body:not(.is-mobile) .gcl-row { cursor: grab; }
 .is-mobile .gcl-auto-row { padding: var(--size-4-2); }
 
 /* 2.7.0: while the graph's own settings panel is open, a legend in the top left gets narrower and stays beside it,
-   so the buttons of its message bar are not hidden under the panel. In a pane too narrow for both, the panel wins as before. */
-.view-content.gcl-has-legend:has(> .graph-controls:not(.is-close)) > .gcl-legend.gcl-pos-top-left:not(.is-text-search) {
+   so the buttons of its message bar are not hidden under the panel. In a pane too narrow for both, the panel wins as before.
+   2.7.1: the plugin marks the open panel with a class (gcl-controls-open); CSS no longer looks into the panel itself. */
+.view-content.gcl-has-legend.gcl-controls-open > .gcl-legend.gcl-pos-top-left:not(.is-text-search) {
 	max-width: max(150px, calc(100% - 276px));
 }
 

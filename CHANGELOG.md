@@ -2,6 +2,12 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.7.1 (2026-11-27)
+
+A fix for how the legend makes room for the graph's settings.
+
+- **Lighter on the graph.** The legend still gets narrower beside the graph's own settings panel, but the plugin now tells it when the panel opens or closes. Before, a CSS rule kept checking the whole graph view for the panel, which Obsidian's review marks as a possible slowdown. Nothing changes in how the legend looks or works.
+
 ## 2.7.0 (2026-11-26)
 
 Folders in the legend, colors you can tell apart, and the global graph's colors in a local graph.
