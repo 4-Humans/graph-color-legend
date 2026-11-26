@@ -175,6 +175,9 @@ export class Legend {
 	private nodeHoverTimer = 0;
 	private autoFor: NoteInfo[] | null = null;
 	private autoAny = false;
+	/** Watches the graph's own settings panel, so the legend can make room for it while it is open. */
+	private controlsObserver: MutationObserver | null = null;
+	private controlsEl: HTMLElement | null = null;
 
 	constructor(
 		private plugin: GraphColorLegendPlugin,
@@ -202,7 +205,29 @@ export class Legend {
 		});
 		view.contentEl.addEventListener("pointermove", this.onGraphPointer);
 		view.contentEl.addEventListener("pointerleave", this.onGraphLeave);
+		this.watchControls();
 		this.update(true);
+	}
+
+	/**
+	 * Marks the graph view while the graph's own settings panel is open (`gcl-controls-open`), so CSS can make
+	 * a legend in the top left narrower beside it. A class set from here, so CSS does not have to look into the panel.
+	 */
+	private watchControls(): void {
+		const content = this.view.contentEl;
+		const sync = (): void => {
+			const panel = content.querySelector<HTMLElement>(":scope > .graph-controls");
+			if (panel !== this.controlsEl) {
+				this.controlsEl = panel;
+				// The panel itself was replaced: watch the new one's class.
+				if (panel) observer.observe(panel, { attributes: true, attributeFilter: ["class"] });
+			}
+			content.toggleClass("gcl-controls-open", !!panel && !panel.hasClass("is-close"));
+		};
+		const observer = new MutationObserver(sync);
+		observer.observe(content, { childList: true });
+		this.controlsObserver = observer;
+		sync();
 	}
 
 	destroy(): void {
@@ -215,7 +240,10 @@ export class Legend {
 		this.resetText();
 		this.setHighlight(null);
 		this.el.remove();
-		this.view.contentEl.removeClass("gcl-has-legend");
+		this.controlsObserver?.disconnect();
+		this.controlsObserver = null;
+		this.controlsEl = null;
+		this.view.contentEl.removeClass("gcl-has-legend", "gcl-controls-open");
 	}
 
 	private get sizeKey(): "graph" | "local" {
