@@ -13,13 +13,15 @@ import {
 	setRawGroupColor,
 } from "./graph-internals";
 import { History, MAX_UNDO_BYTES, StepResult } from "./history";
-import { PresetSuggestModal } from "./modals";
+import { PALETTE, PresetSuggestModal } from "./modals";
 import { renameTagInNotes, RenameResult, TagUsage } from "./tag-rename";
 import { Highlighter } from "./highlight";
 import { t } from "./i18n";
+import { agentRule } from "./ai-text";
+import { visibleColors } from "./auto-groups";
 import { labelFromQuery } from "./labels";
 import { replaceTagInQuery } from "./tags";
-import { ContentView, Legend, LegendSize, rgbToHex, SIZE_LIMITS } from "./legend";
+import { ContentView, graphBackground, Legend, LegendSize, rgbToHex, SIZE_LIMITS } from "./legend";
 import { collectLegendNotes, LegendNote } from "./attributes";
 import { entriesFromFrontmatter, rewriteQueriesInFrontmatter, setNameInFrontmatter } from "./note-names";
 import { queryKey } from "./query-match";
@@ -55,7 +57,9 @@ export interface GraphColorLegendSettings {
 	/** Extra legend sections: tags and properties of the notes in the graph. */
 	showTags: boolean;
 	showProperties: boolean;
-	/** Collapsed legend sections ("tags", "properties"). */
+	/** One more section: the folders the notes of the graph lie in. */
+	showFolders: boolean;
+	/** Collapsed legend sections ("tags", "properties", "folders"). */
 	collapsedSections: string[];
 	/** Custom names, keyed by the group's query. */
 	names: Record<string, string>;
@@ -77,8 +81,8 @@ export interface GraphColorLegendSettings {
 	knownGroups: ColorGroup[] | null;
 	/** Groups removed from graph.json outside Obsidian, kept on the graph until the person decides. */
 	pendingRemoved: RemovedGroup[];
-	/** Own order of tags and properties in the legend (queries); entries not listed follow in the usual order. */
-	order: { tags: string[]; properties: string[] };
+	/** Own order of tags, properties and folders in the legend (queries); entries not listed follow in the usual order. */
+	order: { tags: string[]; properties: string[]; folders: string[] };
 	/** List: roomy rows. Compact: tight rows, for many groups or small screens. */
 	style: LegendStyle;
 	/** Place of the legend moved by its title (position "free"), kept apart for the global and the local graph. */
@@ -87,6 +91,10 @@ export interface GraphColorLegendSettings {
 	autoOffer: boolean;
 	/** The graph node under the pointer lights up its row in the legend. */
 	nodeHover: boolean;
+	/** A local graph without color groups gets an offer to use the global graph's; "Not needed" turns it off. */
+	localOffer: boolean;
+	/** A local graph that opens without color groups of its own gets the global graph's by itself. */
+	localAuto: boolean;
 }
 
 
@@ -116,7 +124,8 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	searchScope: "graph",
 	showTags: true,
 	showProperties: true,
-	collapsedSections: ["properties"],
+	showFolders: true,
+	collapsedSections: ["properties", "folders"],
 	names: {},
 	hidden: [],
 	knownQueries: [],
@@ -127,11 +136,13 @@ const DEFAULT_SETTINGS: GraphColorLegendSettings = {
 	groupsBackup: [],
 	knownGroups: null,
 	pendingRemoved: [],
-	order: { tags: [], properties: [] },
+	order: { tags: [], properties: [], folders: [] },
 	style: "list",
 	offset: { graph: null, local: null },
 	autoOffer: true,
 	nodeHover: true,
+	localOffer: true,
+	localAuto: false,
 };
 // Note: DEFAULT_SETTINGS.names is never used directly; sanitizeSettings makes a fresh object.
 
@@ -146,11 +157,13 @@ const CONTROL_KEYS = [
 	"opacity",
 	"highlight",
 	"showInLocalGraph",
+	"localAuto",
 	"hideEmpty",
 	"showUngrouped",
 	"searchText",
 	"showTags",
 	"showProperties",
+	"showFolders",
 	"neighbors",
 	"nodeHover",
 	"showLegend",
@@ -248,9 +261,14 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		searchScope: d.searchScope === "all" || d.searchScope === "graph" ? d.searchScope : DEFAULT_SETTINGS.searchScope,
 		showTags: typeof d.showTags === "boolean" ? d.showTags : DEFAULT_SETTINGS.showTags,
 		showProperties: typeof d.showProperties === "boolean" ? d.showProperties : DEFAULT_SETTINGS.showProperties,
-		collapsedSections: Array.isArray(d.collapsedSections)
-			? stringList(d.collapsedSections)
-			: [...DEFAULT_SETTINGS.collapsedSections],
+		showFolders: typeof d.showFolders === "boolean" ? d.showFolders : DEFAULT_SETTINGS.showFolders,
+		collapsedSections: (() => {
+			if (!Array.isArray(d.collapsedSections)) return [...DEFAULT_SETTINGS.collapsedSections];
+			const list = stringList(d.collapsedSections);
+			// Settings saved before the "Folders" section existed: it starts folded, so the legend does not grow by itself.
+			if (typeof d.showFolders !== "boolean" && !list.includes("folders")) list.push("folders");
+			return list;
+		})(),
 		names,
 		hidden: stringList(d.hidden),
 		knownQueries: stringList(d.knownQueries),
@@ -266,7 +284,11 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		pendingRemoved: sanitizeRemoved(d.pendingRemoved),
 		order: (() => {
 			const o = (typeof d.order === "object" && d.order !== null ? d.order : {}) as Record<string, unknown>;
-			return { tags: stringList(o.tags).slice(0, 5000), properties: stringList(o.properties).slice(0, 5000) };
+			return {
+				tags: stringList(o.tags).slice(0, 5000),
+				properties: stringList(o.properties).slice(0, 5000),
+				folders: stringList(o.folders).slice(0, 5000),
+			};
 		})(),
 		style: STYLES.includes(d.style as LegendStyle) ? (d.style as LegendStyle) : DEFAULT_SETTINGS.style,
 		offset: (() => {
@@ -275,6 +297,8 @@ export function sanitizeSettings(raw: unknown): GraphColorLegendSettings {
 		})(),
 		autoOffer: typeof d.autoOffer === "boolean" ? d.autoOffer : DEFAULT_SETTINGS.autoOffer,
 		nodeHover: typeof d.nodeHover === "boolean" ? d.nodeHover : DEFAULT_SETTINGS.nodeHover,
+		localOffer: typeof d.localOffer === "boolean" ? d.localOffer : DEFAULT_SETTINGS.localOffer,
+		localAuto: typeof d.localAuto === "boolean" ? d.localAuto : DEFAULT_SETTINGS.localAuto,
 	};
 }
 
@@ -593,6 +617,16 @@ export default class GraphColorLegendPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
+			id: "take-global-groups",
+			name: str.cmdLocalTake,
+			checkCallback: (checking) => {
+				const legend = this.activeLegend();
+				if (!legend || !legend.canTakeGlobalGroups()) return false;
+				if (!checking) legend.takeGlobalGroups();
+				return true;
+			},
+		});
+		this.addCommand({
 			id: "toggle-compact",
 			name: str.cmdCompact,
 			callback: () => {
@@ -607,6 +641,16 @@ export default class GraphColorLegendPlugin extends Plugin {
 				const legend = this.activeLegend();
 				if (!legend || !legend.hasGroups()) return false;
 				if (!checking) void legend.exportImage("copy");
+				return true;
+			},
+		});
+		this.addCommand({
+			id: "copy-legend-text",
+			name: str.textCopy,
+			checkCallback: (checking) => {
+				const legend = this.activeLegend();
+				if (!legend || !legend.hasGroups()) return false;
+				if (!checking) void legend.copyText();
 				return true;
 			},
 		});
@@ -632,9 +676,10 @@ export default class GraphColorLegendPlugin extends Plugin {
 
 	/**
 	 * Replaces the color groups of a graph (new order, a new group, a preset) and offers to undo it.
+	 * Changes with the same `mergeKey` that follow each other quickly are one step to undo.
 	 * The global graph's groups are saved in the graph settings; a local graph keeps its own.
 	 */
-	async changeGroups(legend: Legend, next: ColorGroup[], label: string, message: string): Promise<void> {
+	async changeGroups(legend: Legend, next: ColorGroup[], label: string, message: string, mergeKey?: string): Promise<void> {
 		const prev = legend.currentGroups();
 		const view = legend.view;
 		const isLocal = legend.isLocal;
@@ -648,6 +693,7 @@ export default class GraphColorLegendPlugin extends Plugin {
 		}
 		this.history.push({
 			label,
+			mergeKey,
 			undo: async () => {
 				await this.replaceGroups(view, isLocal, prev);
 				if (copyBefore) {
@@ -708,7 +754,7 @@ export default class GraphColorLegendPlugin extends Plugin {
 		for (const [k, v] of Object.entries(d.names)) names[k] = v;
 		this.settings.names = names;
 		this.settings.hidden = [...d.hidden];
-		this.settings.order = { tags: [...d.order.tags], properties: [...d.order.properties] };
+		this.settings.order = { tags: [...d.order.tags], properties: [...d.order.properties], folders: [...(d.order.folders ?? [])] };
 		await this.saveSettingsAndRefresh();
 	}
 
@@ -733,6 +779,13 @@ export default class GraphColorLegendPlugin extends Plugin {
 		});
 		await this.saveSettingsAndRefresh();
 		if (opts.flash && opts.legend) opts.legend.flash(opts.flash, true);
+	}
+
+	/** The global graph's color groups as its settings hold them now (a copy). */
+	globalGroups(): ColorGroup[] {
+		const inst = getGraphPluginInstance(this.app);
+		const stored = (inst?.options ? normalizeGroups(inst.options.colorGroups) : null) ?? this.fileGroups ?? [];
+		return stored.map((g) => ({ ...g }));
 	}
 
 	private snapshotGroups(): GroupsSnapshot {
@@ -1382,11 +1435,13 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			{ key: "opacity", name: str.opacity, desc: str.opacityDesc, kind: "slider", min: 30, max: 100, step: 5 },
 			{ key: "highlight", name: str.highlight, desc: str.highlightDesc, kind: "toggle" },
 			{ key: "showInLocalGraph", name: str.localGraph, desc: str.localGraphDesc, kind: "toggle" },
+			{ key: "localAuto", name: str.localAuto, desc: str.localAutoDesc, kind: "toggle" },
 			{ key: "hideEmpty", name: str.hideEmpty, desc: str.hideEmptyDesc, kind: "toggle" },
 			{ key: "showUngrouped", name: str.showUngrouped, desc: str.showUngroupedDesc, kind: "toggle" },
 			{ key: "searchText", name: str.searchText, desc: str.searchTextDesc, kind: "toggle" },
 			{ key: "showTags", name: str.showTags, desc: str.showTagsDesc, kind: "toggle" },
 			{ key: "showProperties", name: str.showProperties, desc: str.showPropertiesDesc, kind: "toggle" },
+			{ key: "showFolders", name: str.showFolders, desc: str.showFoldersDesc, kind: "toggle" },
 			{ key: "neighbors", name: str.neighbors, desc: str.neighborsDesc, kind: "toggle" },
 			{ key: "nodeHover", name: str.nodeHover, desc: str.nodeHoverDesc, kind: "toggle" },
 			{ key: "showLegend", name: str.showLegend, desc: str.showLegendDesc, kind: "toggle" },
@@ -1425,6 +1480,11 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 			return { ...base, control: { type: "dropdown", key: c.key, options: this.options(c.key) } };
 		});
 		items.push({
+			type: "group",
+			heading: str.aiHeading,
+			items: [{ name: str.aiRule, desc: str.aiRuleDesc, render: (setting: Setting) => this.fillAgentRule(setting) }],
+		});
+		items.push({
 			type: "list",
 			heading: str.presets,
 			emptyState: str.presetsEmpty,
@@ -1459,6 +1519,24 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 		return this.plugin.saveSettingsAndRefresh();
 	}
 
+	/** The rule that makes an AI agent name the color groups it adds: one button puts it on the clipboard. */
+	private fillAgentRule(setting: Setting): void {
+		const str = t();
+		setting.addButton((b) =>
+			b.setButtonText(str.aiRuleCopy).onClick(async () => {
+				try {
+					// The settings can be a window of their own: its clipboard is the one that has the focus.
+					// Only colors that show on the graph of the theme in use, in the palette's order.
+					const colors = visibleColors(PALETTE, graphBackground(b.buttonEl.doc));
+					await b.buttonEl.win.navigator.clipboard.writeText(agentRule(this.app.vault.configDir, colors));
+					new Notice(str.aiRuleCopied, 3000);
+				} catch {
+					new Notice(str.copyFailed, 6000);
+				}
+			}),
+		);
+	}
+
 	/** Draw the tab again after a list changed (new Obsidian redraws the definitions, old calls display()). */
 	private redraw(): void {
 		const tab = this as unknown as { update?: () => void };
@@ -1483,6 +1561,9 @@ class GraphColorLegendSettingTab extends PluginSettingTab {
 				setting.addSlider((sl) => sl.setLimits(c.min ?? 0, c.max ?? 100, c.step ?? 1).setValue(Number(s[c.key])).onChange(save));
 			else setting.addDropdown((d) => d.addOptions(this.options(c.key)).setValue(String(s[c.key])).onChange(save));
 		}
+
+		new Setting(containerEl).setName(str.aiHeading).setHeading();
+		this.fillAgentRule(new Setting(containerEl).setName(str.aiRule).setDesc(str.aiRuleDesc));
 
 		new Setting(containerEl).setName(str.presets).setDesc(str.presetsDesc).setHeading();
 		if (this.plugin.settings.presets.length === 0) {

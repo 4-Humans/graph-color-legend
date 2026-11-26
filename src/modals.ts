@@ -17,8 +17,60 @@ export function parseHex(value: string): number | null {
 	return m ? parseInt(m[1] ?? "0", 16) : null;
 }
 
-export function freeColor(used: number[]): number {
-	return PALETTE.find((c) => !used.includes(c)) ?? PALETTE[used.length % PALETTE.length] ?? 0x4363d8;
+/** The code a graphics editor shows for the color: "#E6194B". */
+export function hexCode(rgb: number): string {
+	return hexOf(rgb).toUpperCase();
+}
+
+/**
+ * A settings row with a color picker and, next to it, the color's hex code as text that can be selected.
+ * `onPick` gets every color the picker reports.
+ */
+export function colorSetting(containerEl: HTMLElement, name: string, desc: string | null, rgb: number, onPick: (rgb: number) => void): Setting {
+	const setting = new Setting(containerEl).setName(name);
+	if (desc) setting.setDesc(desc);
+	const code = setting.controlEl.createSpan({ cls: "gcl-hex", text: hexCode(rgb) });
+	setting.addColorPicker((c) =>
+		c.setValue(hexOf(rgb)).onChange((v) => {
+			const next = parseHex(v);
+			if (next === null) return;
+			code.setText(hexCode(next));
+			onPick(next);
+		}),
+	);
+	return setting;
+}
+
+/** "Change color" for one color group: the picker with the hex code; the color goes to the graph as it is picked. */
+export class GroupColorModal extends Modal {
+	constructor(
+		app: App,
+		private name: string,
+		private query: string,
+		private rgb: number,
+		private onPick: (rgb: number) => void,
+	) {
+		super(app);
+	}
+
+	onOpen(): void {
+		const str = t();
+		const { contentEl } = this;
+		this.setTitle(str.menuChangeColor);
+		contentEl.addClass("gcl-modal");
+		new Setting(contentEl).setName(this.name).setDesc(this.query);
+		let timer = 0;
+		colorSetting(contentEl, str.groupColor, str.groupColorDesc, this.rgb, (rgb) => {
+			// The picker reports every step of a drag: the graph gets the color once the hand rests.
+			window.clearTimeout(timer);
+			timer = window.setTimeout(() => this.onPick(rgb), 250);
+		});
+		new Setting(contentEl).addButton((b) => b.setButtonText(str.doneEditing).setCta().onClick(() => this.close()));
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
 }
 
 /** "Make a color group" for a tag or a property: pick the color and where the group goes. */
@@ -42,11 +94,7 @@ export class NewGroupModal extends Modal {
 		contentEl.createEl("p", { cls: "gcl-modal-desc", text: str.makeGroupDesc });
 		let rgb = this.rgb;
 		let first = true;
-		new Setting(contentEl).setName(str.groupColor).addColorPicker((c) =>
-			c.setValue(hexOf(rgb)).onChange((v) => {
-				rgb = parseHex(v) ?? rgb;
-			}),
-		);
+		colorSetting(contentEl, str.groupColor, null, rgb, (v) => (rgb = v));
 		new Setting(contentEl)
 			.setName(str.groupPlace)
 			.setDesc(str.groupPlaceDesc)

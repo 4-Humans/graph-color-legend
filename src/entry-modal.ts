@@ -4,6 +4,7 @@ import { labelFromQuery } from "./labels";
 import type { Legend } from "./legend";
 import type GraphColorLegendPlugin from "./main";
 import { MAX_UNDO_BYTES } from "./history";
+import { colorSetting } from "./modals";
 import { countNotesWithTag, findTagUsage, TagUsage } from "./tag-rename";
 import { bareTag, extractTags, validateTag } from "./tags";
 
@@ -115,23 +116,13 @@ export class EntryModal extends Modal {
 	private buildColorSetting(): void {
 		const str = t();
 		let timer = 0;
-		const hex = "#" + ((this.rgb ?? 0) & 0xffffff).toString(16).padStart(6, "0");
-		new Setting(this.contentEl)
-			.setName(str.groupColor)
-			.setDesc(str.groupColorDesc)
-			.addColorPicker((c) => {
-				c.setValue(hex);
-				c.onChange((value) => {
-					window.clearTimeout(timer);
-					timer = window.setTimeout(() => void this.applyColor(value), 250);
-				});
-			});
+		colorSetting(this.contentEl, str.groupColor, str.groupColorDesc, this.rgb ?? 0, (rgb) => {
+			window.clearTimeout(timer);
+			timer = window.setTimeout(() => void this.applyColor(rgb), 250);
+		});
 	}
 
-	private async applyColor(value: string): Promise<void> {
-		const m = /^#?([0-9a-f]{6})$/i.exec(value.trim());
-		if (!m) return;
-		const rgb = parseInt(m[1], 16);
+	private async applyColor(rgb: number): Promise<void> {
 		if (rgb === this.rgb) return;
 		const ok = this.rgb === null ? false : await this.plugin.changeGroupColor(this.query, this.rgb, rgb);
 		if (ok) this.rgb = rgb;

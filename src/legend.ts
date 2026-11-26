@@ -1,10 +1,12 @@
 import { MarkdownView, Menu, Notice, Platform, TFile, View, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import { AttributeEntry, Attributes, collectAttributes, collectNotes } from "./attributes";
-import { autoOptions, type AutoOption } from "./auto-groups";
+import { autoOptions, distinctColor, nextColor, similarColors, type AutoOption } from "./auto-groups";
 import { AutoGroupsModal } from "./auto-modal";
+import { legendText } from "./ai-text";
 import { EntryModal } from "./entry-modal";
+import { folderEntries, type FolderEntry } from "./folders";
 import { ColorGroup, getRenderer, GraphNode, hoveredNode, nodeRgb, openGlobalSearch, readLiveGroups, UNGROUPED } from "./graph-internals";
-import { freeColor, NewGroupModal, NotesModal, PathsModal, PresetNameModal } from "./modals";
+import { GroupColorModal, NewGroupModal, NotesModal, PALETTE, PathsModal, PresetNameModal } from "./modals";
 import { matchNotes, NoteInfo } from "./query-match";
 import { HighlightSpec } from "./highlight";
 import { t } from "./i18n";
@@ -55,7 +57,7 @@ interface GroupInfo {
 	warnings: string[];
 }
 
-type SectionId = "tags" | "properties";
+type SectionId = "tags" | "properties" | "folders";
 type DragSection = "groups" | SectionId;
 
 /** Pixels the mouse has to move with the button held before an entry is picked up. */
@@ -97,12 +99,20 @@ const NODE_HOVER_SCROLL_MS = 300;
 /** Background the graph is drawn on, by theme: used to leave out colors that would not show on it. */
 const GRAPH_BG = { dark: 0x1e1e1e, light: 0xffffff };
 
+/** Background the graph is drawn on, by the theme of this window. */
+export function graphBackground(doc: Document): number {
+	return doc.body.hasClass("theme-dark") ? GRAPH_BG.dark : GRAPH_BG.light;
+}
+
 /** One legend panel attached to one graph view. */
 export class Legend {
 	readonly el: HTMLElement;
 	private signature = "";
 	private groups: ColorGroup[] = [];
 	private attrs: Attributes = EMPTY_ATTRS;
+	/** Folders of the notes in the graph, for the "Folders" section. */
+	private folders: FolderEntry[] = [];
+	private foldersKey = "";
 	private attrNodes = -1;
 	private editing = false;
 	private hoverQuery: string | null = null;
@@ -151,6 +161,10 @@ export class Legend {
 	private flashMsg: Flash | null = null;
 	/** Since when the global graph has had no color groups at all (a moment of loading is not a loss). */
 	private noGroupsSince: number | null = null;
+	/** A local graph: whether its own color groups can be read (and so written). */
+	private groupsReachable = false;
+	/** A local graph gets the global graph's groups by itself at most once, when it opens without its own. */
+	private localAutoDone = false;
 	private flashTimer = 0;
 	private pointerInside = false;
 	/** Set when the legend was just moved by its title, so the click that ends the move does not collapse it. */
@@ -230,6 +244,8 @@ export class Legend {
 		this.notes = collectNotes(this.plugin.app, r);
 		this.groupMatches = groups.map((g) => matchNotes(g.query, this.notes));
 		this.attrs = s.showTags || s.showProperties ? collectAttributes(this.plugin.app, this.notes) : EMPTY_ATTRS;
+		this.folders = s.showFolders ? folderEntries(this.notes) : [];
+		this.foldersKey = JSON.stringify(this.folders.map((f) => [f.query, f.ids.length]));
 	}
 
 	private countColors(groups: ColorGroup[]): void {
@@ -291,7 +307,56 @@ export class Legend {
 				warnings.push(colored === 0 ? str.coveredAll(coverers.map(name).join(", ")) : str.coveredSome(own.size - colored, coverers.map(name).join(", ")));
 			}
 		}
+		// Another group's color is hard to tell from this one. Only where both show on the graph now.
+		if (colored > 0) {
+			const near = this.groups
+				.map((_x, i) => i)
+				.filter((i) => i !== index && similarColors(this.groups[i]?.rgb ?? g.rgb, g.rgb) && (this.colorCounts.get(this.groups[i]?.rgb ?? -1) ?? 0) > 0);
+			if (near.length > 0) warnings.push(str.similarColor([...new Set(near.map(name))].join(", ")));
+		}
 		return { count, warnings };
+	}
+
+	/** The group shares its color with another one, or has a color that is hard to tell from another's. */
+	private colorClashes(index: number): boolean {
+		const g = this.groups[index];
+		if (!g) return false;
+		return this.groups.some((o, i) => i !== index && (o.rgb === g.rgb || similarColors(o.rgb, g.rgb)));
+	}
+
+	/** Background the graph is drawn on, by theme. */
+	private graphBackground(): number {
+		return graphBackground(this.el.doc);
+	}
+
+	/** Gives a group the color that lies furthest from all the others. */
+	private pickDistinctColor(index: number): void {
+		const groups = this.currentGroups();
+		const g = groups[index];
+		if (!g) return;
+		const others = groups.filter((_x, i) => i !== index).map((o) => o.rgb);
+		const rgb = distinctColor(PALETTE, others, this.graphBackground());
+		if (rgb === g.rgb) return;
+		groups[index] = { ...g, rgb };
+		const name = this.plugin.displayName(g.query);
+		void this.plugin.changeGroups(this, groups, t().stepColor(name), t().distinctDone(name));
+	}
+
+	/** "Change color": the dialog with the picker and the hex code; the group is found again by its query on every pick. */
+	private changeColor(index: number): void {
+		const g = this.groups[index];
+		if (!g) return;
+		const query = g.query;
+		const name = this.plugin.displayName(query);
+		new GroupColorModal(this.plugin.app, name, query, g.rgb, (rgb) => {
+			const groups = this.currentGroups();
+			// The same place if the group is still there, otherwise wherever its query went.
+			const at = groups[index]?.query === query ? index : groups.findIndex((x) => x.query === query);
+			const now = groups[at];
+			if (!now || now.rgb === rgb) return;
+			groups[at] = { ...now, rgb };
+			void this.plugin.changeGroups(this, groups, t().stepColor(name), t().distinctDone(name), "color:" + query);
+		}).open();
 	}
 
 	/** Color groups as the legend sees them now (for undo and presets). */
@@ -331,6 +396,14 @@ export class Legend {
 		if (this.nodeHoverQueries.length > 0 && !hoveredNode(this.view)) this.setNodeHover([]);
 		const live = readLiveGroups(this.view);
 		const groups = live ?? (this.isLocal ? [] : (this.plugin.fileGroups ?? []));
+		this.groupsReachable = live !== null;
+		if (this.isLocal && live && !this.localAutoDone) {
+			this.localAutoDone = true;
+			if (live.length === 0 && this.plugin.settings.localAuto && this.plugin.globalGroups().length > 0) {
+				// Not from inside this update: it updates every legend again. Quietly: the person asked for it in the settings.
+				window.setTimeout(() => void this.plugin.replaceGroups(this.view, true, this.plugin.globalGroups()), 0);
+			}
+		}
 		this.refreshAttributes(force, groups);
 		this.countColors(groups);
 		this.watchGroups(groups);
@@ -346,6 +419,7 @@ export class Legend {
 			this.flashMsg,
 			groups,
 			this.attrs.signature,
+			this.foldersKey,
 			s.collapsed,
 			s.position,
 			s.style,
@@ -355,6 +429,7 @@ export class Legend {
 			s.highlight,
 			s.showTags,
 			s.showProperties,
+			s.showFolders,
 			s.hideEmpty,
 			s.showUngrouped,
 			this.ungroupedIds.length,
@@ -363,6 +438,7 @@ export class Legend {
 			s.searchScope,
 			this.groupsLost(),
 			this.wantsAutoOffer(),
+			this.wantsLocalOffer() ? this.plugin.globalGroups().length : -1,
 			s.nodeHover,
 			this.isLocal ? 0 : this.plugin.settings.pendingRemoved.length,
 			s.collapsedSections,
@@ -396,8 +472,9 @@ export class Legend {
 
 	private sectionEntries(id: SectionId): Entry[] {
 		const s = this.plugin.settings;
-		const list: AttributeEntry[] = id === "tags" ? (s.showTags ? this.attrs.tags : []) : s.showProperties ? this.attrs.properties : [];
-		// A tag or property that already is a color group is listed only once, as the group.
+		const list: AttributeEntry[] =
+			id === "tags" ? (s.showTags ? this.attrs.tags : []) : id === "properties" ? (s.showProperties ? this.attrs.properties : []) : this.folders;
+		// A tag, property or folder that already is a color group is listed only once, as the group.
 		const groupQueries = new Set(this.groups.map((g) => g.query.trim()));
 		const entries = list.filter((a) => !groupQueries.has(a.query)).map((a) => ({ query: a.query, rgb: null, ids: a.ids }));
 		// Own order first (set by dragging); entries not in it follow in the usual order.
@@ -411,7 +488,7 @@ export class Legend {
 
 	private allEntries(): Entry[] {
 		const none = this.ungroupedEntry();
-		return [...this.groupEntries(), ...(none ? [none] : []), ...this.sectionEntries("tags"), ...this.sectionEntries("properties")];
+		return [...this.groupEntries(), ...(none ? [none] : []), ...this.sectionEntries("tags"), ...this.sectionEntries("properties"), ...this.sectionEntries("folders")];
 	}
 
 	private stateOf(query: string): EntryState {
@@ -439,9 +516,12 @@ export class Legend {
 		el.toggleClass("is-editing", this.editing);
 		el.toggleClass("is-off", !s.showLegend);
 		el.toggleClass("is-text-search", !s.collapsed && this.textWanted() !== "");
-		const hasAny = this.groups.length > 0 || this.attrs.tags.length > 0 || this.attrs.properties.length > 0;
-		// A local graph without its own groups (and nothing else to list) gets no legend.
-		el.toggleClass("is-empty-local", this.isLocal && !hasAny);
+		const hasAny = this.groups.length > 0 || this.attrs.tags.length > 0 || this.attrs.properties.length > 0 || this.folders.length > 0;
+		// A local graph without its own groups (and no tags or properties to list) gets no legend, unless it has
+		// the global graph's groups to offer. Folders alone do not bring one up: nearly every note lies in a folder.
+		const localOffer = this.wantsLocalOffer();
+		const localEmpty = this.groups.length === 0 && this.attrs.tags.length === 0 && this.attrs.properties.length === 0;
+		el.toggleClass("is-empty-local", this.isLocal && localEmpty && !localOffer);
 		el.setCssProps({
 			"--gcl-font-size": `${s.fontSize}px`,
 			"--gcl-bg-opacity": `${s.opacity}%`,
@@ -523,8 +603,9 @@ export class Legend {
 		if (this.flashMsg) this.renderFlash(this.flashMsg);
 		if (this.groupsLost()) this.renderLostBar();
 		if (!this.isLocal && this.plugin.settings.pendingRemoved.length > 0) this.renderRemovedBar();
-		const offer = this.wantsAutoOffer();
-		if (offer) this.renderAutoOffer();
+		const offer = this.wantsAutoOffer() || localOffer;
+		if (localOffer) this.renderLocalOffer();
+		else if (offer) this.renderAutoOffer();
 		if (this.focusMode) this.renderFocusBar();
 
 		const body = el.createDiv({ cls: "gcl-body" });
@@ -552,7 +633,9 @@ export class Legend {
 		const none = this.ungroupedEntry();
 		const ungrouped = none && this.matches(none) ? [none] : [];
 		this.renderRows(body, ungrouped, "ungrouped");
-		const shown = groups.length + ungrouped.length + this.renderSection(body, "tags", str.sectionTags) + this.renderSection(body, "properties", str.sectionProperties);
+		const shown = groups.length + ungrouped.length + this.renderSection(body, "tags", str.sectionTags) +
+			this.renderSection(body, "properties", str.sectionProperties) +
+			this.renderSection(body, "folders", str.sectionFolders);
 		if (this.searching() && shown === 0 && !text) body.createDiv({ cls: "gcl-empty", text: str.noMatches });
 		this.markNodeRows(false);
 	}
@@ -724,6 +807,40 @@ export class Legend {
 		);
 	}
 
+	/** A local graph without its own color groups, while the global graph has some: offer to use those. */
+	private wantsLocalOffer(): boolean {
+		return this.isLocal && this.plugin.settings.localOffer && this.groupsReachable && this.groups.length === 0 && this.plugin.globalGroups().length > 0;
+	}
+
+	private renderLocalOffer(): void {
+		const str = t();
+		const bar = this.el.createDiv({ cls: "gcl-flash gcl-auto-offer" });
+		bar.createSpan({ cls: "gcl-flash-text", text: str.localOffer });
+		const go = bar.createEl("button", { cls: "gcl-flash-button gcl-flash-redo", text: str.localTake(this.plugin.globalGroups().length) });
+		go.addEventListener("click", () => this.takeGlobalGroups());
+		const no = bar.createEl("button", { cls: "gcl-flash-button", text: str.groupsKeepEmpty });
+		no.addEventListener("click", () => {
+			this.plugin.settings.localOffer = false;
+			void this.plugin.saveSettingsAndRefresh();
+		});
+	}
+
+	/** Whether this local graph can take the global graph's color groups now. */
+	canTakeGlobalGroups(): boolean {
+		return this.isLocal && this.groupsReachable && this.plugin.globalGroups().length > 0;
+	}
+
+	/**
+	 * A local graph keeps its own color groups, and a new one has none: this copies the global graph's
+	 * groups into it (in place of its own, if it has any). A copy, not a link; the step can be undone.
+	 */
+	takeGlobalGroups(): void {
+		if (!this.canTakeGlobalGroups()) return;
+		const next = this.plugin.globalGroups();
+		const str = t();
+		void this.plugin.changeGroups(this, next, str.stepLocalTake, str.localTaken(next.length));
+	}
+
 	/** Whether there is anything to suggest for these notes; worked out once per set of notes. */
 	private canAutoColor(): boolean {
 		if (this.autoFor !== this.notes) {
@@ -775,7 +892,7 @@ export class Legend {
 			freeNotes: free ? free.size : notes.length,
 			hasGroups,
 			used: this.groups.map((g) => g.rgb),
-			background: this.el.doc.body.hasClass("theme-dark") ? GRAPH_BG.dark : GRAPH_BG.light,
+			background: this.graphBackground(),
 			name: (query: string) => this.plugin.displayName(query),
 		};
 		new AutoGroupsModal(app, options, context, (groups) => {
@@ -1693,6 +1810,27 @@ export class Legend {
 		const s = this.plugin.settings;
 		const query = entry.query;
 		const menu = new Menu();
+		const index = entry.index;
+		if (index !== undefined) {
+			// What the warning sign on the row means, in words, and the way out right under it.
+			const warnings = this.groupInfo(index).warnings;
+			for (const text of warnings) {
+				menu.addItem((item) => {
+					item.setTitle(text).setIcon("triangle-alert").setIsLabel(true);
+					const dom = (item as unknown as { dom?: unknown }).dom;
+					if (dom instanceof HTMLElement) dom.addClass("gcl-menu-warning");
+				});
+			}
+			if (this.colorClashes(index)) {
+				menu.addItem((item) =>
+					item
+						.setTitle(str.menuDistinctColor)
+						.setIcon("pipette")
+						.onClick(() => this.pickDistinctColor(index)),
+				);
+			}
+			if (warnings.length > 0 || this.colorClashes(index)) menu.addSeparator();
+		}
 		if (s.highlight) {
 			const selected = this.selected.has(query);
 			menu.addItem((item) => {
@@ -1749,6 +1887,14 @@ export class Legend {
 					.onClick(() => this.makeGroup(entry)),
 			);
 		}
+		if (index !== undefined) {
+			menu.addItem((item) =>
+				item
+					.setTitle(str.menuChangeColor)
+					.setIcon("palette")
+					.onClick(() => this.changeColor(index)),
+			);
+		}
 		menu.addSeparator();
 		menu.addItem((item) =>
 			item
@@ -1792,7 +1938,7 @@ export class Legend {
 	/** A tag or property becomes a color group of the graph. */
 	private makeGroup(entry: Entry): void {
 		const name = this.plugin.displayName(entry.query);
-		const start = freeColor(this.groups.map((g) => g.rgb));
+		const start = nextColor(PALETTE, this.groups.map((g) => g.rgb), this.graphBackground());
 		new NewGroupModal(this.plugin.app, name, entry.query, start, (rgb, first) => {
 			const group: ColorGroup = { query: entry.query, rgb, alpha: 1 };
 			const next = first ? [group, ...this.currentGroups()] : [...this.currentGroups(), group];
@@ -1894,10 +2040,14 @@ export class Legend {
 		if (!this.isLocal) {
 			menu.addSeparator();
 			menu.addItem((item) => item.setTitle(str.autoButton).setIcon("paint-bucket").onClick(() => this.openAutoGroups()));
+		} else if (this.canTakeGlobalGroups()) {
+			menu.addSeparator();
+			menu.addItem((item) => item.setTitle(str.cmdLocalTake).setIcon("paint-bucket").onClick(() => this.takeGlobalGroups()));
 		}
 		if (this.hasGroups()) {
 			menu.addSeparator();
 			this.addImageItems(menu);
+			menu.addItem((item) => item.setTitle(str.textCopy).setIcon("clipboard-list").onClick(() => void this.copyText()));
 		}
 		menu.addSeparator();
 		menu.addItem((item) => item.setTitle(str.openSettings).setIcon("settings").onClick(() => this.plugin.openSettings()));
@@ -1941,6 +2091,24 @@ export class Legend {
 	/** True when the legend lists at least one color group that is not hidden. */
 	hasGroups(): boolean {
 		return this.shownGroups().length > 0;
+	}
+
+	/** The color groups as plain text on the clipboard, to paste into a chat with an AI agent or into a note. */
+	async copyText(): Promise<void> {
+		const str = t();
+		const rows = this.groups.map((g, index) => ({
+			name: this.plugin.displayName(g.query),
+			query: g.query,
+			rgb: g.rgb,
+			count: this.groupInfo(index).count,
+		}));
+		try {
+			// The graph can live in a separate window: its own clipboard is the one that has the focus.
+			await this.el.win.navigator.clipboard.writeText(legendText(this.isLocal, rows, this.ungroupedIds.length));
+			new Notice(str.textCopied, 3000);
+		} catch {
+			new Notice(str.copyFailed, 6000);
+		}
 	}
 
 	/** The color groups shown in the legend as a picture: copied to the clipboard or saved in the vault. */

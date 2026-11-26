@@ -275,20 +275,93 @@ function hslToRgb(h: number, s: number, l: number): number {
 	return (f(0) << 16) | (f(8) << 8) | f(4);
 }
 
+// Colors are compared in OKLab, where equal distances look about equally different to the eye.
+function oklab(rgb: number): [number, number, number] {
+	const lin = (v: number) => {
+		const x = v / 255;
+		return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+	};
+	const r = lin((rgb >> 16) & 255);
+	const g = lin((rgb >> 8) & 255);
+	const b = lin(rgb & 255);
+	const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+	const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+	const t = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+	return [
+		0.2104542553 * l + 0.793617785 * m - 0.0040720468 * t,
+		1.9779984951 * l - 2.428592205 * m + 0.4505937099 * t,
+		0.0259040371 * l + 0.7827717662 * m - 0.808675766 * t,
+	];
+}
+
+/** How different two colors look: 0 for the same color, about 1 between black and white. */
+export function colorDistance(a: number, b: number): number {
+	const x = oklab(a);
+	const y = oklab(b);
+	return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+}
+
+/** The colors that show on this background, in their order. */
+export function visibleColors(colors: number[], background: number): number[] {
+	return colors.filter((c) => contrast(c, background) >= MIN_CONTRAST);
+}
+
 /**
- * The next color for a new group: the first palette color that is not used yet and stands out on the
- * background; when those run out, the unused color that stands out best; then new hues, so two groups
- * never share a color (same-colored groups are highlighted together).
+ * Closer than this, two small dots on a graph are hard to tell apart (neighboring shades of one color).
+ * The colors of the built-in palette all lie further apart (the closest pair at 0.074), while plain red
+ * (#ff0000, a color AI agents like to pick) against the palette's first color, crimson, is 0.069 and counts as similar.
+ */
+const SIMILAR_DISTANCE = 0.072;
+
+/** Two different colors that are hard to tell apart. The same color is not "similar": that has its own warning. */
+export function similarColors(a: number, b: number): boolean {
+	return a !== b && colorDistance(a, b) < SIMILAR_DISTANCE;
+}
+
+/** Neither one of the colors in use, nor hard to tell from one of them. */
+function standsApart(c: number, used: number[]): boolean {
+	return used.every((u) => u !== c && colorDistance(u, c) >= SIMILAR_DISTANCE);
+}
+
+/**
+ * The next color for a new group: the first palette color that stands out on the background and is
+ * neither used yet nor hard to tell from a used one; then the first unused one that stands out; when
+ * those run out, the unused color that stands out best; then new hues, so two groups never share a
+ * color (same-colored groups are highlighted together).
  */
 export function nextColor(palette: number[], used: number[], background: number): number {
 	const free = palette.filter((c) => !used.includes(c));
-	const clear = free.find((c) => contrast(c, background) >= MIN_CONTRAST);
+	const visible = free.filter((c) => contrast(c, background) >= MIN_CONTRAST);
+	const apart = visible.find((c) => standsApart(c, used));
+	if (apart !== undefined) return apart;
+	const clear = visible[0];
 	if (clear !== undefined) return clear;
 	if (free.length > 0) return [...free].sort((a, b) => contrast(b, background) - contrast(a, background))[0] ?? 0;
 	const light = luminance(background) > 0.4 ? 0.42 : 0.62;
+	let fallback: number | null = null;
 	for (let i = 0; i < 360; i++) {
 		const c = hslToRgb((used.length * 137.508 + i * 23) % 360, 0.7, light);
-		if (!used.includes(c)) return c;
+		if (used.includes(c)) continue;
+		if (standsApart(c, used)) return c;
+		fallback ??= c;
 	}
-	return 0x888888;
+	return fallback ?? 0x888888;
+}
+
+/**
+ * A color for a group whose color is the same as, or hard to tell from, another group's: the one that
+ * lies furthest from all the other colors and still shows on the background. Palette colors win a tie.
+ */
+export function distinctColor(palette: number[], others: number[], background: number): number {
+	const candidates = [...palette];
+	for (const l of [0.62, 0.45, 0.78]) for (let h = 0; h < 360; h += 10) candidates.push(hslToRgb(h, 0.7, l));
+	let best = 0x888888;
+	let bestGap = -1;
+	for (const c of candidates) {
+		if (contrast(c, background) < MIN_CONTRAST) continue;
+		let gap = Infinity;
+		for (const o of others) gap = Math.min(gap, colorDistance(c, o));
+		if (gap > bestGap) [best, bestGap] = [c, gap];
+	}
+	return best;
 }
