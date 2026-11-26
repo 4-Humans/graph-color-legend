@@ -2,6 +2,19 @@
 
 What changed in each version of Graph Color Legend, newest first. The same notes are on the [Releases](https://github.com/4-Humans/graph-color-legend/releases) page.
 
+## 2.7.0 (2026-11-26)
+
+Folders in the legend, colors you can tell apart, and the global graph's colors in a local graph.
+
+- **Folders.** A third section, under Tags and Properties, lists the folders the notes of the graph lie in, with the number of notes. Click a folder to highlight its notes, or choose **Make a color group** in its menu. Where nearly all notes lie in one folder, its subfolders are listed instead. The section starts folded. New setting **Show folders**, on by default.
+- **Similar colors.** The warning sign now also marks a group whose color is hard to tell from another group's, not only groups with exactly the same color. The group's menu then has **Pick a color that stands out**: it gives the group the color that lies furthest from all the others and still shows on the graph's background. **Undo** brings the old color back.
+- **Warnings in words.** Right-click a group that has a warning sign: its menu now starts with what the warning means, for example that its color is hard to tell from another group's, with **Pick a color that stands out** right under it.
+- **Change color.** The menu of every color group has **Change color**: a color picker with the color's hex code next to it. **Undo** brings the old color back. The hex code is now shown next to every color picker of the plugin.
+- **New groups keep their distance.** **Color the graph** and **Make a color group** no longer suggest a color that is hard to tell from one the graph already has.
+- **The global graph's colors in a local graph.** A local graph keeps its own color groups, and a new one has none. The legend now offers **Use the global graph's groups** there: one press copies them, **Undo** takes them back, **Not needed** hides the offer. The same is in the header's right-click menu and in the commands. New setting **Color local graphs like the global graph**, off by default, does it by itself for every local graph that opens without groups of its own.
+- **For AI agents.** The settings have a new button, **Copy the rule**: it copies the rule that teaches your AI agent to name the color groups it adds, ready to paste into `AGENTS.md` or `CLAUDE.md`. The rule has two new steps. One gives the agent a list of colors to take the first free one from, each as the number `graph.json` stores and as its hex code (the button lists the colors that show on your theme). The other tells it to put a new group above the groups that would take its notes. The new command **Copy legend as text**, also in the header's right-click menu, copies the color groups with their names, queries, colors and note counts, to paste into a chat with an agent or into a note.
+- **Room for the graph's settings.** While the graph's own settings panel is open, a legend in the top left corner gets narrower and stands beside it, so the buttons in the legend are not hidden under the panel.
+
 ## 2.6.0 (2026-11-25)
 
 Color a new graph in one step, and see which group a node belongs to.
